@@ -1,0 +1,13 @@
+# requirements.txt — main_v6.py (BOHO BOM2BRAVO v2.1)
+# Cài tất cả: pip install -r requirements.txt
+
+# --- Bắt buộc ---
+pandas
+customtkinter
+openpyxl
+pyodbc
+rapidfuzz
+
+# --- Tuỳ chọn (có thì dùng, không có cũng chạy được) ---
+tksheet          # bảng tính nhanh hơn trong tab; nếu thiếu tự fallback sang ttk.Treeview
+msoffcrypto      # mở file Excel có mật khẩu; nếu thiếu thì không mở được file khoá

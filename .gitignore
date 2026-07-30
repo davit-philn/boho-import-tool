@@ -1,0 +1,38 @@
+# ── Build artifacts ───────────────────────────────────────────
+Tools/dist/
+Tools/build/
+Tools/installer_output/
+_releases/
+
+# ── Third-party program (không phải source code) ──────────────
+BravoProgram/
+
+# ── File Excel/template nặng (>100MB, GitHub không nhận) ──────
+Template/
+
+# ── Python cache ──────────────────────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+
+# ── Sensitive config (DB credentials, passwords) ──────────────
+Tools/config/db_config.json
+Tools/services/config/db_config.json
+Other/acc.txt
+
+# ── Logs ──────────────────────────────────────────────────────
+*.log
+
+# ── Backup folders (lưu local, không cần git) ─────────────────
+_backups/
+backup_phaseB_working/
+Tools/archive/
+Tools/views/main_window_backup*.py
+
+# ── Claude internal ───────────────────────────────────────────
+.claude/
+
+# ── OS ────────────────────────────────────────────────────────
+Thumbs.db
+.DS_Store
+desktop.ini
