@@ -3976,7 +3976,7 @@ class BOMToolApp(ctk.CTk):
             fg_color=("#0066CC", "#0066CC"),
             hover_color=("#0055AA", "#0055AA"),
             text_color="#FFFFFF",
-            height=26, corner_radius=8, state="disabled")
+            height=26, corner_radius=8, state="normal")
         self.btn_thdm_aggregate.pack(side=tk.RIGHT, padx=6, pady=5)
 
         # ── RIGHT: File picker + Preview ─────────────────────────────────────
@@ -5212,16 +5212,11 @@ class BOMToolApp(ctk.CTk):
         self.lbl_thdm_sel_count.config(
             text=f"{n} BOM được chọn",
             fg=C["accent"] if n else C["text"])
-        state = "normal" if n else "disabled"
-        self.btn_thdm_aggregate.configure(state=state)
+        self.btn_thdm_aggregate.configure(state="normal")
 
     # ── THDM: Đọc Excel và preview ────────────────────────────────────────────
 
     def _thdm_aggregate(self):
-        if not self._thdm_checked_ids:
-            self._show_msg("Chưa chọn BOM",
-                "Vui lòng chọn ít nhất 1 BOM trong danh sách.", kind="info")
-            return
         if not self._thdm_excel_path:
             self._show_msg("Chưa chọn file Excel",
                 "Vui lòng nhấn '📂 Chọn file Excel THDM' để chọn file.", kind="info")
@@ -6350,7 +6345,7 @@ class BOMToolApp(ctk.CTk):
                     _raw = resolved.get(_sc)
                     _ck  = _all_view_caches.get((_bm, _dk, _ss, _lv), [])
                     if _raw is not None and _ck:
-                        _found, _ = self._lookup_generic(_raw, _ck, _kl)
+                        _found, _ = self._lookup_generic(_raw, _ck, _kl, _no_popup=True)
                         resolved[_sc] = _found
                 comma    = "," if idx < len(sec_rows) - 1 else ";"
                 vals_str = ", ".join(_fmt(resolved.get(c)) for c in cols)

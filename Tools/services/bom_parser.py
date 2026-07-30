@@ -243,7 +243,8 @@ def _build_excel_col_map(headers, mapping_recs, col_aliases=None):
 def _parse_section_excel_rows(all_rows, headers, col_map, mapping_recs, stt_idx,
                                skip_no_item=True, item_cols=('ItemId', 'ItemName'),
                                ff_always_override=False,
-                               extra_col_extractor=None):
+                               extra_col_extractor=None,
+                               roman_as_hdr=False):
     """
     Pipeline chung parse Excel rows cho 1 section — dùng cho cả BOM và THDM.
 
@@ -311,7 +312,7 @@ def _parse_section_excel_rows(all_rows, headers, col_map, mapping_recs, stt_idx,
               if ci < len(padded)}
 
         if is_hdr:
-            if not _is_roman_numeral(stt_str):
+            if not _is_roman_numeral(stt_str) or roman_as_hdr:
                 # Chữ cái (A, B, C...) → capture Fill_Forward, bỏ qua không INSERT
                 for sql_col in ff_fields:
                     v = rd.get(sql_col)
@@ -340,10 +341,12 @@ def _parse_section_excel_rows(all_rows, headers, col_map, mapping_recs, stt_idx,
                 continue
             # Dòng tiêu đề nhóm: ItemId rỗng + ItemName toàn HOA → bỏ qua
             # VD: "VẬT TƯ CHÍNH", "NGUYÊN VẬT LIỆU CHÍNH"
+            # Ngoại lệ: STT số > 0 → data row thực (vd: M1_KÍNH THỦY THEO MẪU), không bỏ qua
             if not _has_id and _has_nm:
                 _nm_s = str(_nm_v).strip()
                 if _nm_s.upper() == _nm_s and any(c.isalpha() for c in _nm_s):
-                    continue
+                    if not (stt_str and NUMERIC_STT_PATTERN.match(stt_str)):
+                        continue
 
         rows_out.append(rd)
 
@@ -1064,6 +1067,7 @@ def _thdm_parse_thvt_sheet(wb_cached, wb_live, wb_hid, sheet_name, thdm_map,
         skip_no_item=True, item_cols=('ItemId', 'ItemName'),
         ff_always_override=True,   # ItemType luôn lấy section letter (A, D, E1...) từ header
         extra_col_extractor=_muc_extractor,
+        roman_as_hdr=True,         # I, II... trong TH VT là tên section, không phải số La Mã
     )
 
     # Fix col_map collision: "Định mức P.KT" map vào Quantity9 trước (first-match)
