@@ -490,7 +490,7 @@ class BOMToolApp(ctk.CTk):
 
         # ── Giao diện ────────────────────────────────────────────────────────────
         ctk.CTkLabel(dlg, text="Giao diện",
-            font=ctk.CTkFontFONT_MD_B,
+            font=ctk.CTkFont(*FONT_MD_B),
             anchor="w").pack(fill="x", padx=PAD_LG, pady=(14, 4))
 
         _theme_labels = {"Dark": "🌙 Tối", "Light": "☀️ Sáng", "System": "💻 Hệ thống"}
@@ -501,7 +501,7 @@ class BOMToolApp(ctk.CTk):
         theme_seg = ctk.CTkSegmentedButton(
             dlg,
             values=["🌙 Tối", "☀️ Sáng", "💻 Hệ thống"],
-            font=ctk.CTkFontFONT_MD,
+            font=ctk.CTkFont(*FONT_MD),
             command=lambda lbl: self.apply_theme(_label_to_mode.get(lbl, "Dark")),
         )
         theme_seg.set(_current_label)
@@ -509,13 +509,13 @@ class BOMToolApp(ctk.CTk):
 
         # ── Tỷ lệ hiển thị ───────────────────────────────────────────────────────
         ctk.CTkLabel(dlg, text="Tỷ lệ hiển thị",
-            font=ctk.CTkFontFONT_MD_B,
+            font=ctk.CTkFont(*FONT_MD_B),
             anchor="w").pack(fill="x", padx=PAD_LG, pady=(16, 4))
 
         scale_seg = ctk.CTkSegmentedButton(
             dlg,
             values=["80%", "90%", "100%", "110%", "120%"],
-            font=ctk.CTkFontFONT_BODY,
+            font=ctk.CTkFont(*FONT_BODY),
             command=self.change_scaling_event,
         )
         scale_seg.set(getattr(self, "_current_scaling_pct", "100%"))
@@ -577,7 +577,7 @@ class BOMToolApp(ctk.CTk):
         logo_wrap.pack(pady=(0, 22))
         logo_wrap.pack_propagate(False)
         ctk.CTkLabel(logo_wrap, text="B",
-                     font=ctk.CTkFontFONT_ICON,
+                     font=ctk.CTkFont(*FONT_ICON),
                      text_color=dt["btn_primary"]).place(relx=0.5, rely=0.48, anchor="center")
 
         # Tên app
@@ -585,7 +585,7 @@ class BOMToolApp(ctk.CTk):
                      font=ctk.CTkFont("Segoe UI", 24, "bold"),
                      text_color=dt["text_main"]).pack()
         ctk.CTkLabel(center, text="v1  —  BOHO",
-                     font=ctk.CTkFontFONT_MD,
+                     font=ctk.CTkFont(*FONT_MD),
                      text_color=dt["text_muted"]).pack(pady=(3, 22))
 
         # Separator
@@ -598,16 +598,16 @@ class BOMToolApp(ctk.CTk):
         db_card = ctk.CTkFrame(center, fg_color=dt["bg_main"], corner_radius=10)
         db_card.pack(pady=(0, 26), ipadx=24, ipady=4)
         ctk.CTkLabel(db_card, text=f"🖧  {server}",
-                     font=ctk.CTkFontFONT_LABEL_N,
+                     font=ctk.CTkFont(*FONT_LABEL_N),
                      text_color=dt["tv_text"]).pack(padx=28, pady=(12, 3))
         ctk.CTkLabel(db_card, text=f"📋  {database}",
-                     font=ctk.CTkFontFONT_MD,
+                     font=ctk.CTkFont(*FONT_MD),
                      text_color=dt["text_muted"]).pack(padx=28, pady=(0, 12))
 
         # Status label
         self._startup_status_lbl = ctk.CTkLabel(
             center, text="⏳  Đang kiểm tra kết nối...",
-            font=ctk.CTkFontFONT_LABEL_N,
+            font=ctk.CTkFont(*FONT_LABEL_N),
             text_color=dt["text_muted"])
         self._startup_status_lbl.pack()
 
@@ -673,13 +673,13 @@ class BOMToolApp(ctk.CTk):
                 err_short = str(error)[:200] if error else "Không rõ nguyên nhân"
                 ctk.CTkLabel(bf,
                     text=err_short,
-                    font=ctk.CTkFontFONT_SMALL,
+                    font=ctk.CTkFont(*FONT_SMALL),
                     text_color=dt["text_muted"],
                     wraplength=420,
                     justify="left").pack(pady=(0, 8))
                 ctk.CTkLabel(bf,
                     text="⚠️  Kiểm tra VPN hoặc cấu hình DB rồi thử lại",
-                    font=ctk.CTkFontFONT_BODY,
+                    font=ctk.CTkFont(*FONT_BODY),
                     text_color=dt["text_muted"]).pack(pady=(0, 14))
                 row = ctk.CTkFrame(bf, fg_color="transparent")
                 row.pack()
@@ -741,7 +741,7 @@ class BOMToolApp(ctk.CTk):
         # Trái: App name
         ctk.CTkLabel(topbar,
             text="🏭  BOHO  BOM / THDM",
-            font=ctk.CTkFontFONT_LABEL,
+            font=ctk.CTkFont(*FONT_LABEL),
             text_color=("#16A34A", "#4EC9B0")).grid(
             row=0, column=0, padx=(14, 16), pady=PAD_MD)
 
@@ -755,7 +755,7 @@ class BOMToolApp(ctk.CTk):
             db_txt   = "⚠️  Chưa có db_config.json"
             db_color = ("#D97706", "#D7BA7D")
         ctk.CTkLabel(topbar, text=db_txt,
-            font=ctk.CTkFontFONT_BODY,
+            font=ctk.CTkFont(*FONT_BODY),
             text_color=db_color).grid(row=0, column=1, sticky="w")
 
         # Phải: status + mapping + settings
@@ -779,7 +779,7 @@ class BOMToolApp(ctk.CTk):
             text_color=_mapping_text_color,
             border_color=_mapping_text_color,
             hover_color=("gray90","gray25"),
-            font=ctk.CTkFontFONT_BODY,
+            font=ctk.CTkFont(*FONT_BODY),
             width=110, height=28, corner_radius=6).pack(side=tk.LEFT, padx=(0, 4))
 
         self._btn_settings = ctk.CTkButton(right_bar, text="🎨",
@@ -788,7 +788,7 @@ class BOMToolApp(ctk.CTk):
             text_color=("gray50","gray60"),
             border_color=("gray50","gray60"),
             hover_color=("gray90","gray25"),
-            font=ctk.CTkFontFONT_BODY,
+            font=ctk.CTkFont(*FONT_BODY),
             width=34, height=28, corner_radius=6)
         self._btn_settings.pack(side=tk.LEFT)
 
@@ -808,7 +808,7 @@ class BOMToolApp(ctk.CTk):
         self.nb.add(TAB_CATALOG)
         try:
             self.nb._segmented_button.configure(
-                font=ctk.CTkFontFONT_MD_B, height=38)
+                font=ctk.CTkFont(*FONT_MD_B), height=38)
             self.nb._segmented_button.grid_configure(sticky="w", padx=PAD_MD, pady=(6, 0))
         except Exception:
             pass
@@ -835,7 +835,7 @@ class BOMToolApp(ctk.CTk):
         bar.pack_propagate(False)
 
         # Ghost Button — style mặc định cho mọi nút phụ (Flat/Minimal)
-        _G = dict(font=ctk.CTkFontFONT_BODY_B,
+        _G = dict(font=ctk.CTkFont(*FONT_BODY_B),
                   fg_color=("#EBEBEB", "#2D2D2D"),
                   text_color=("#1A1A1A", "#E1E1E1"),
                   hover_color=("#D8D8D8", "#3A3A3A"),
@@ -870,14 +870,14 @@ class BOMToolApp(ctk.CTk):
                      width=1, height=28).pack(side=tk.LEFT, padx=6, pady=PAD_MD)
 
         ctk.CTkLabel(bar, text="Nhân viên:",
-            font=ctk.CTkFontFONT_BODY,
+            font=ctk.CTkFont(*FONT_BODY),
             text_color=("gray40","gray55"),
             fg_color="transparent").pack(side=tk.LEFT, padx=(0, 4))
 
         self.cmb_creator = _SearchCombo(bar,
             values=["— Đang tải... —"],
             width=200, height=32,
-            font=ctk.CTkFontFONT_BODY,
+            font=ctk.CTkFont(*FONT_BODY),
             command=self._on_creator_change,
             placeholder="— Chọn nhân viên —")
         self.cmb_creator.pack(side=tk.LEFT, padx=(0, 6), pady=10)
@@ -888,7 +888,7 @@ class BOMToolApp(ctk.CTk):
         # ── Primary: nút hành động chính duy nhất — Accent Blue ──────────────
         self.btn_import = CButton(bar, text="🚀  ③  Import vào BRAVO",
             command=self._start_import, state="disabled",
-            font=ctk.CTkFontFONT_BODY_B,
+            font=ctk.CTkFont(*FONT_BODY_B),
             fg_color=("#0066CC", "#0066CC"),
             hover_color=("#0055AA", "#0055AA"),
             text_color="#FFFFFF",
@@ -946,7 +946,7 @@ class BOMToolApp(ctk.CTk):
 
         self.lbl_table = CLabel(right,
             text="— Chưa có dữ liệu —",
-            font=ctk.CTkFontFONT_LABEL,
+            font=ctk.CTkFont(*FONT_LABEL),
             text_color=("gray50","gray60"),
             fg_color="transparent", anchor="w")
         self.lbl_table.grid(row=0, column=0, sticky="ew", pady=(0, 2))
@@ -1261,7 +1261,7 @@ class BOMToolApp(ctk.CTk):
         inner.pack(fill=tk.X, padx=PAD_MD, pady=PAD_SM)
 
         ctk.CTkLabel(inner, text="Phần:",
-            font=ctk.CTkFontFONT_MD_B).pack(side=tk.LEFT, padx=(0,8))
+            font=ctk.CTkFont(*FONT_MD_B)).pack(side=tk.LEFT, padx=(0,8))
 
         _sect_names = list(self.mapping.get('_CONFIG', {}).keys())
         self._map_section_var = tk.StringVar(
@@ -1275,7 +1275,7 @@ class BOMToolApp(ctk.CTk):
         for txt, color in [("✅ OK","#4EC9B0"), ("⚠️ Thiếu","#D7BA7D"),
                             ("❓ Cần xác nhận","#F97316"), ("🔧 System","gray")]:
             ctk.CTkLabel(inner, text=txt,
-                font=ctk.CTkFontFONT_MD,
+                font=ctk.CTkFont(*FONT_MD),
                 text_color=color).pack(side=tk.RIGHT, padx=6)
 
         MAP_COLS   = ["SQL Column","Tên trên Excel","Kiểu DL","Bắt buộc",
@@ -1399,7 +1399,7 @@ class BOMToolApp(ctk.CTk):
 
         self.btn_catalog_load = ctk.CTkButton(bar, text="🔄  Tải dữ liệu",
             command=self._catalog_load,
-            font=ctk.CTkFontFONT_BODY_B,
+            font=ctk.CTkFont(*FONT_BODY_B),
             fg_color=("#1D4ED8","#1D4ED8"),
             hover_color=("#1E40AF","#1E40AF"),
             height=32, corner_radius=6)
@@ -1407,7 +1407,7 @@ class BOMToolApp(ctk.CTk):
 
         self.btn_catalog_export = CButton(bar, text="📤  Export Excel",
             command=self._catalog_export_excel,
-            font=ctk.CTkFontFONT_BODY_B,
+            font=ctk.CTkFont(*FONT_BODY_B),
             fg_color="transparent", border_width=1,
             text_color=("#3B82F6","#60A5FA"),
             border_color=("#3B82F6","#60A5FA"),
@@ -1421,12 +1421,12 @@ class BOMToolApp(ctk.CTk):
         self.catalog_search_var = tk.StringVar()
         self.catalog_search_var.trace_add("write", lambda *_: self._catalog_filter())
         ctk.CTkEntry(bar, textvariable=self.catalog_search_var,
-            font=ctk.CTkFontFONT_BODY,
+            font=ctk.CTkFont(*FONT_BODY),
             placeholder_text="🔍  Tìm mã / tên...",
             width=220, height=32, corner_radius=6).pack(side=tk.LEFT, pady=PAD_SM)
 
         self.lbl_catalog_status = CLabel(bar, text="—  Chưa tải",
-            font=ctk.CTkFontFONT_BODY,
+            font=ctk.CTkFont(*FONT_BODY),
             text_color=("gray40","gray55"),
             fg_color="transparent")
         self.lbl_catalog_status.pack(side=tk.RIGHT, padx=(0,12))
@@ -1442,7 +1442,7 @@ class BOMToolApp(ctk.CTk):
 
         self.lbl_catalog_table = CLabel(content_card,
             text="— Chưa tải dữ liệu —",
-            font=ctk.CTkFontFONT_LABEL,
+            font=ctk.CTkFont(*FONT_LABEL),
             text_color=("gray50", "gray60"),
             fg_color="transparent", anchor="w")
         self.lbl_catalog_table.grid(row=0, column=0, sticky="ew", padx=PAD_SM, pady=(2, 2))
@@ -1506,21 +1506,21 @@ class BOMToolApp(ctk.CTk):
         ctk.CTkFrame(bar, fg_color="transparent", width=8).pack(side=tk.LEFT)
 
         CLabel(bar, text="Template NVL:",
-            font=ctk.CTkFontFONT_BODY,
+            font=ctk.CTkFont(*FONT_BODY),
             text_color=("gray40","gray65"),
             fg_color="transparent").pack(side=tk.LEFT, padx=(0,4))
 
         self.cmb_item_template = _SearchCombo(bar,
             values=["— Đang tải... —"],
             width=220, height=32,
-            font=ctk.CTkFontFONT_BODY,
+            font=ctk.CTkFont(*FONT_BODY),
             command=self._on_catalog_template_change,
             placeholder="— Chọn Template —")
         self.cmb_item_template.pack(side=tk.LEFT, padx=(0,6), pady=PAD_SM)
 
         self.btn_export_template = CButton(bar, text="📋  Xuất Template",
             command=self._catalog_export_template_excel,
-            font=ctk.CTkFontFONT_BODY_B,
+            font=ctk.CTkFont(*FONT_BODY_B),
             fg_color="transparent", border_width=1,
             text_color=("#059669","#34D399"),
             border_color=("#059669","#34D399"),
@@ -1533,7 +1533,7 @@ class BOMToolApp(ctk.CTk):
 
         self.btn_catalog_file_select = CButton(bar, text="📂  Chọn file Excel",
             command=self._catalog_select_import_file,
-            font=ctk.CTkFontFONT_BODY_B,
+            font=ctk.CTkFont(*FONT_BODY_B),
             fg_color="transparent", border_width=1,
             text_color=("#D97706","#FCD34D"),
             border_color=("#D97706","#FCD34D"),
@@ -1543,7 +1543,7 @@ class BOMToolApp(ctk.CTk):
 
         self.btn_import_template = CButton(bar, text="📥  Import",
             command=self._catalog_import_template_excel,
-            font=ctk.CTkFontFONT_BODY_B,
+            font=ctk.CTkFont(*FONT_BODY_B),
             fg_color="transparent", border_width=1,
             text_color=("#7C3AED","#A78BFA"),
             border_color=("#7C3AED","#A78BFA"),
@@ -1553,7 +1553,7 @@ class BOMToolApp(ctk.CTk):
 
         self.btn_preview_sql = CButton(bar, text="📋  Preview SQL",
             command=self._catalog_preview_sql,
-            font=ctk.CTkFontFONT_BODY_B,
+            font=ctk.CTkFont(*FONT_BODY_B),
             fg_color="transparent", border_width=1,
             text_color=("#0369A1","#38BDF8"),
             border_color=("#0369A1","#38BDF8"),
@@ -1562,7 +1562,7 @@ class BOMToolApp(ctk.CTk):
         # btn_preview_sql: tạm ẩn, giữ widget để state logic không bị lỗi
 
         self.lbl_import_status = CLabel(bar, text="—  Chưa chọn file",
-            font=ctk.CTkFontFONT_BODY,
+            font=ctk.CTkFont(*FONT_BODY),
             text_color=("gray40","gray55"),
             fg_color="transparent")
         self.lbl_import_status.pack(side=tk.RIGHT, padx=(0,12))
@@ -1573,7 +1573,7 @@ class BOMToolApp(ctk.CTk):
         info_bar.pack_propagate(False)
         self.lbl_import_filename = CLabel(info_bar,
             text="📄  Chưa chọn file",
-            font=ctk.CTkFontFONT_SMALL,
+            font=ctk.CTkFont(*FONT_SMALL),
             text_color=("gray50","gray60"),
             fg_color="transparent", anchor="w")
         self.lbl_import_filename.pack(side=tk.LEFT, padx=PAD_MD, pady=3)
@@ -1594,7 +1594,7 @@ class BOMToolApp(ctk.CTk):
         else:
             CLabel(content_card,
                 text="⚠️  tksheet chưa được cài — không thể hiển thị preview.",
-                font=ctk.CTkFontFONT_BODY,
+                font=ctk.CTkFont(*FONT_BODY),
                 fg_color="transparent").pack(expand=True)
 
     # ── Catalog helper methods ──────────────────────────────────────────────────────────────────
@@ -2192,6 +2192,7 @@ class BOMToolApp(ctk.CTk):
         code = self.catalog_tree.item(sel[0], "values")[0]
         self.clipboard_clear()
         self.clipboard_append(code)
+        self._toast(f"Đã copy: {code}", kind="success")
         self.lbl_catalog_status.config(
             text=f"📋  Đã copy: {code}", fg=C["accent"])
 
@@ -3552,7 +3553,7 @@ class BOMToolApp(ctk.CTk):
             dlg.clipboard_append(all_sql)
 
         CButton(hdr, text="📋 Copy All", command=_copy_all,
-                font=ctk.CTkFontFONT_SMALL,
+                font=ctk.CTkFont(*FONT_SMALL),
                 fg_color="#1E3A5F", hover_color=dt["btn_primary"],
                 text_color="#DBEAFE", height=28, corner_radius=5,
                 width=110).pack(side=_tk.RIGHT, padx=PAD_MD, pady=PAD_SM)
@@ -3622,7 +3623,7 @@ class BOMToolApp(ctk.CTk):
 
         # ── Footer ────────────────────────────────────────────────────────────────
         CButton(dlg, text="Đóng", command=dlg.destroy,
-                font=ctk.CTkFontFONT_BODY_B,
+                font=ctk.CTkFont(*FONT_BODY_B),
                 height=32, corner_radius=6,
                 fg_color=("#3B82F6","#1D4ED8"),
                 hover_color=("#2563EB","#1E40AF"),
@@ -3650,7 +3651,7 @@ class BOMToolApp(ctk.CTk):
 
         def _chip(parent, text, fg, bg):
             ctk.CTkLabel(parent, text=text,
-                         font=ctk.CTkFontFONT_MD_B,
+                         font=ctk.CTkFont(*FONT_MD_B),
                          text_color=fg, fg_color=bg,
                          corner_radius=6, padx=10, pady=PAD_XS).pack(
                 side=tk.LEFT, padx=PAD_XS)
@@ -3702,7 +3703,7 @@ class BOMToolApp(ctk.CTk):
 
         # ── Close button ──────────────────────────────────────────────────────
         CButton(dlg, text="Đóng", command=dlg.destroy,
-                font=ctk.CTkFontFONT_BODY_B,
+                font=ctk.CTkFont(*FONT_BODY_B),
                 height=32, corner_radius=6,
                 fg_color=("#3B82F6","#1D4ED8"),
                 hover_color=("#2563EB","#1E40AF"),
@@ -3754,7 +3755,7 @@ class BOMToolApp(ctk.CTk):
 
         self.btn_thdm_load = ctk.CTkButton(bar, text="🔄  ① Tải dữ liệu",
             command=self._thdm_load_products,
-            font=ctk.CTkFontFONT_BODY_B,
+            font=ctk.CTkFont(*FONT_BODY_B),
             fg_color=("#EBEBEB", "#2D2D2D"),
             text_color=("#1A1A1A", "#E1E1E1"),
             hover_color=("#D8D8D8", "#3A3A3A"),
@@ -3767,13 +3768,13 @@ class BOMToolApp(ctk.CTk):
 
         # Dự án
         CLabel(bar, text="Dự án:",
-            font=ctk.CTkFontFONT_BODY,
+            font=ctk.CTkFont(*FONT_BODY),
             text_color=("gray40","gray65"),
             fg_color="transparent").pack(side=tk.LEFT, padx=(0,4))
         self.cmb_thdm_product = _SearchCombo(bar,
             values=["— Chọn dự án —"],
             width=230, height=32,
-            font=ctk.CTkFontFONT_BODY,
+            font=ctk.CTkFont(*FONT_BODY),
             command=self._thdm_on_product_change,
             placeholder="— Chọn dự án —")
         self.cmb_thdm_product.set("— Chọn dự án —")
@@ -3784,13 +3785,13 @@ class BOMToolApp(ctk.CTk):
 
         # Đơn hàng
         CLabel(bar, text="Đơn hàng:",
-            font=ctk.CTkFontFONT_BODY,
+            font=ctk.CTkFont(*FONT_BODY),
             text_color=("gray40","gray65"),
             fg_color="transparent").pack(side=tk.LEFT, padx=(0,4))
         self.cmb_thdm_order = _SearchCombo(bar,
             values=["— Chọn đơn hàng —"],
             width=240, height=32,
-            font=ctk.CTkFontFONT_BODY,
+            font=ctk.CTkFont(*FONT_BODY),
             command=self._thdm_on_order_change,
             placeholder="— Chọn đơn hàng —",
             state="disabled")
@@ -3801,13 +3802,13 @@ class BOMToolApp(ctk.CTk):
                      width=1, height=36).pack(side=tk.LEFT, padx=(0,8), pady=10)
 
         CLabel(bar, text="Nhân viên:",
-            font=ctk.CTkFontFONT_BODY,
+            font=ctk.CTkFont(*FONT_BODY),
             text_color=("gray40","gray65"),
             fg_color="transparent").pack(side=tk.LEFT, padx=(0,4))
         self.cmb_thdm_creator = _SearchCombo(bar,
             values=["— Đang tải... —"],
             width=200, height=32,
-            font=ctk.CTkFontFONT_BODY,
+            font=ctk.CTkFont(*FONT_BODY),
             command=self._on_thdm_creator_change,
             placeholder="— Chọn nhân viên —")
         self.cmb_thdm_creator.set("— Đang tải... —")
@@ -3817,13 +3818,13 @@ class BOMToolApp(ctk.CTk):
                      width=1, height=36).pack(side=tk.LEFT, padx=(0,8), pady=10)
 
         CLabel(bar, text="Đợt:",
-            font=ctk.CTkFontFONT_BODY,
+            font=ctk.CTkFont(*FONT_BODY),
             text_color=("gray40","gray65"),
             fg_color="transparent").pack(side=tk.LEFT, padx=(0,4))
         self.cmb_thdm_period = _SearchCombo(bar,
             values=["— Đang tải... —"],
             width=180, height=32,
-            font=ctk.CTkFontFONT_BODY,
+            font=ctk.CTkFont(*FONT_BODY),
             command=self._on_thdm_period_change,
             placeholder="— Chọn đợt —")
         self.cmb_thdm_period.set("— Đang tải... —")
@@ -3833,7 +3834,7 @@ class BOMToolApp(ctk.CTk):
                      width=1, height=36).pack(side=tk.LEFT, padx=(0,8), pady=10)
 
         self.lbl_thdm_status = CLabel(bar, text="—  Chưa tải",
-            font=ctk.CTkFontFONT_BODY,
+            font=ctk.CTkFont(*FONT_BODY),
             text_color=("gray40","gray55"),
             fg_color="transparent")
         self.lbl_thdm_status.pack(side=tk.LEFT)
@@ -3858,7 +3859,7 @@ class BOMToolApp(ctk.CTk):
         self.thdm_search_var = tk.StringVar()
         self.thdm_search_var.trace_add("write", lambda *_: self._thdm_filter_bom())
         ctk.CTkEntry(fe, textvariable=self.thdm_search_var,
-            font=ctk.CTkFontFONT_BODY,
+            font=ctk.CTkFont(*FONT_BODY),
             placeholder_text="🔍  Tìm BOM...",
             height=30, corner_radius=0, border_width=0,
             fg_color="transparent").pack(fill=tk.X, padx=6, pady=1)
@@ -3976,7 +3977,7 @@ class BOMToolApp(ctk.CTk):
 
         self.btn_thdm_sel_all = ctk.CTkButton(lb, text="☑ Tất cả",
             command=lambda: self._thdm_toggle_all(True),
-            font=ctk.CTkFontFONT_SMALL,
+            font=ctk.CTkFont(*FONT_SMALL),
             fg_color="transparent", border_width=1,
             text_color=("gray40","gray65"),
             border_color=("gray50","gray55"),
@@ -3986,7 +3987,7 @@ class BOMToolApp(ctk.CTk):
 
         self.btn_thdm_desel_all = ctk.CTkButton(lb, text="☐ Bỏ",
             command=lambda: self._thdm_toggle_all(False),
-            font=ctk.CTkFontFONT_SMALL,
+            font=ctk.CTkFont(*FONT_SMALL),
             fg_color="transparent", border_width=1,
             text_color=("gray40","gray65"),
             border_color=("gray50","gray55"),
@@ -3995,7 +3996,7 @@ class BOMToolApp(ctk.CTk):
         self.btn_thdm_desel_all.pack(side=tk.LEFT, padx=(0,6), pady=5)
 
         self.lbl_thdm_sel_count = CLabel(lb, text="0 BOM chọn",
-            font=ctk.CTkFontFONT_SMALL,
+            font=ctk.CTkFont(*FONT_SMALL),
             text_color=("gray40","gray55"),
             fg_color="transparent")
         self.lbl_thdm_sel_count.pack(side=tk.LEFT)
@@ -4003,7 +4004,7 @@ class BOMToolApp(ctk.CTk):
         # Xanh dương (hành động xử lý) — xanh lá dành riêng cho nút INSERT
         self.btn_thdm_aggregate = ctk.CTkButton(lb, text="📊  ③ Tổng hợp",
             command=self._thdm_aggregate,
-            font=ctk.CTkFontFONT_BODY_B,
+            font=ctk.CTkFont(*FONT_BODY_B),
             fg_color=("#0066CC", "#0066CC"),
             hover_color=("#0055AA", "#0055AA"),
             text_color="#FFFFFF",
@@ -4022,7 +4023,7 @@ class BOMToolApp(ctk.CTk):
 
         self.btn_thdm_pick_excel = ctk.CTkButton(fp, text="📂  ② Chọn file Excel THDM",
             command=self._thdm_pick_excel,
-            font=ctk.CTkFontFONT_BODY,
+            font=ctk.CTkFont(*FONT_BODY),
             fg_color="transparent", border_width=1,
             text_color=("gray40","gray65"),
             border_color=("gray50","gray55"),
@@ -4034,7 +4035,7 @@ class BOMToolApp(ctk.CTk):
                      width=1, height=24).pack(side=tk.LEFT, padx=(0,8), pady=9)
 
         self.lbl_thdm_excel_path = CLabel(fp, text="Chưa chọn file",
-            font=ctk.CTkFontFONT_SMALL,
+            font=ctk.CTkFont(*FONT_SMALL),
             text_color=("gray40","gray55"),
             fg_color="transparent")
         self.lbl_thdm_excel_path.pack(side=tk.LEFT)
@@ -4100,7 +4101,7 @@ class BOMToolApp(ctk.CTk):
             _fb,
             values=["Tất cả (0)", "⚠ Dòng lỗi (0)"],
             command=self._thdm_toggle_filter,
-            font=ctk.CTkFontFONT_BODY,
+            font=ctk.CTkFont(*FONT_BODY),
             height=26, corner_radius=6,
         )
         self._thdm_filter_seg.pack(side=tk.LEFT, padx=PAD_SM, pady=2)
@@ -4205,7 +4206,7 @@ class BOMToolApp(ctk.CTk):
         # muốn hiện lại chỉ cần thêm .pack(...) như 2 nút bên dưới.
         self.btn_thdm_export_xl = CButton(ab, text="📤  Xuất Excel",
             command=self._thdm_export_excel,
-            font=ctk.CTkFontFONT_MD,
+            font=ctk.CTkFont(*FONT_MD),
             fg_color="transparent", border_width=1,
             text_color=("gray50", "gray60"),
             border_color=("gray50", "gray55"),
@@ -4214,7 +4215,7 @@ class BOMToolApp(ctk.CTk):
 
         self.btn_thdm_view_sql = CButton(ab, text="📋  Xem SQL",
             command=self._thdm_view_sql,
-            font=ctk.CTkFontFONT_MD,
+            font=ctk.CTkFont(*FONT_MD),
             fg_color="transparent", border_width=1,
             text_color=("gray50", "gray60"),
             border_color=("gray50", "gray55"),
@@ -4223,7 +4224,7 @@ class BOMToolApp(ctk.CTk):
 
         self.btn_thdm_validate = CButton(ab, text="🔍  ④ Kiểm tra",
             command=self._thdm_validate,
-            font=ctk.CTkFontFONT_MD_B,
+            font=ctk.CTkFont(*FONT_MD_B),
             fg_color="transparent", border_width=1,
             text_color=("#3B82F6", "#60A5FA"),
             border_color=("#3B82F6", "#60A5FA"),
@@ -4241,7 +4242,7 @@ class BOMToolApp(ctk.CTk):
         # INSERT — Primary Blue, đồng nhất với nút Import bên tab BOM
         self.btn_thdm_insert = CButton(ab, text="💾  ⑤ Tạo THDM",
             command=self._thdm_insert_db,
-            font=ctk.CTkFontFONT_MD_B,
+            font=ctk.CTkFont(*FONT_MD_B),
             fg_color=("#0066CC", "#0066CC"),
             hover_color=("#0055AA", "#0055AA"),
             text_color="#FFFFFF",
@@ -4252,7 +4253,7 @@ class BOMToolApp(ctk.CTk):
         # Label kết quả tổng hợp/kiểm tra — đặt ở action bar dưới (đủ chỗ,
         # tránh tràn như khi để trên thanh lookup)
         self.lbl_thdm_result = CLabel(ab, text="",
-            font=ctk.CTkFontFONT_BODY,
+            font=ctk.CTkFont(*FONT_BODY),
             text_color=("gray40", "gray55"),
             fg_color="transparent")
         self.lbl_thdm_result.pack(side=tk.LEFT, padx=(10, 6))
@@ -6822,13 +6823,13 @@ class BOMToolApp(ctk.CTk):
         hdr.grid_columnconfigure(1, weight=1)   # error label — fills remaining space
 
         ctk.CTkLabel(hdr, text="📋  Lịch sử Import",
-            font=ctk.CTkFontFONT_MD_B).grid(
+            font=ctk.CTkFont(*FONT_MD_B)).grid(
             row=0, column=0, sticky="w")
 
         # Statusbar lỗi THDM — cập nhật bởi _thdm_on_row_select khi click dòng bảng
         self.lbl_thdm_err_bar = ctk.CTkLabel(
             hdr, text="",
-            font=ctk.CTkFontFONT_BODY,
+            font=ctk.CTkFont(*FONT_BODY),
             text_color=("#DC2626", "#FF6B6B"),
             anchor="w", fg_color="transparent")
         self.lbl_thdm_err_bar.grid(row=0, column=1, sticky="ew", padx=(12, 4))
@@ -6839,7 +6840,7 @@ class BOMToolApp(ctk.CTk):
             text_color=("#3B82F6","#007ACC"),
             border_color=("#3B82F6","#007ACC"),
             hover_color=("#DBEAFE","#1E3A5F"),
-            font=ctk.CTkFontFONT_MD,
+            font=ctk.CTkFont(*FONT_MD),
             width=90, height=24, corner_radius=6)
         self.btn_log_db.grid(row=0, column=2, padx=(4, 0))
         Tooltip(self.btn_log_db,
@@ -6850,7 +6851,7 @@ class BOMToolApp(ctk.CTk):
             fg_color="transparent", border_width=1,
             text_color="gray", border_color=("gray50","gray50"),
             hover_color=("gray90","gray25"),
-            font=ctk.CTkFontFONT_MD,
+            font=ctk.CTkFont(*FONT_MD),
             width=70, height=24, corner_radius=6).grid(
             row=0, column=3, padx=(4, 4))
         self.btn_log_toggle = ctk.CTkButton(hdr,
@@ -6860,7 +6861,7 @@ class BOMToolApp(ctk.CTk):
             text_color=("#3B82F6","#007ACC"),
             border_color=("#3B82F6","#007ACC"),
             hover_color=("#DBEAFE","#1E3A5F"),
-            font=ctk.CTkFontFONT_MD_B,
+            font=ctk.CTkFont(*FONT_MD_B),
             width=90, height=24, corner_radius=6)
         self.btn_log_toggle.grid(row=0, column=4)
 
@@ -7881,12 +7882,12 @@ class BOMToolApp(ctk.CTk):
         ctk.CTkLabel(
             top,
             text=f"Tìm thấy {n} mã không khớp chính xác trong file Excel.",
-            font=ctk.CTkFontFONT_LABEL,
+            font=ctk.CTkFont(*FONT_LABEL),
         ).pack(anchor="w")
         ctk.CTkLabel(
             top,
             text="Chọn mã B20 tương đương cho từng dòng. Bỏ qua → giá trị sẽ là NULL.",
-            font=ctk.CTkFontFONT_BODY,
+            font=ctk.CTkFont(*FONT_BODY),
             text_color=("gray45", "gray65"),
         ).pack(anchor="w", pady=(2, 0))
 
@@ -7900,7 +7901,7 @@ class BOMToolApp(ctk.CTk):
         ]):
             ctk.CTkLabel(
                 hdr_frame, text=txt,
-                font=ctk.CTkFontFONT_BODY_B,
+                font=ctk.CTkFont(*FONT_BODY_B),
                 width=w, anchor=anchor,
             ).grid(row=0, column=col, padx=(10, 4), pady=6, sticky="w")
         hdr_frame.grid_columnconfigure(2, weight=1)
@@ -7929,13 +7930,13 @@ class BOMToolApp(ctk.CTk):
 
             ctk.CTkLabel(
                 row_f, text=ctx_text, width=200, anchor="w",
-                font=ctk.CTkFontFONT_BODY,
+                font=ctk.CTkFont(*FONT_BODY),
                 text_color=("gray40", "gray70"),
             ).grid(row=0, column=0, padx=(10, 4), pady=7, sticky="w")
 
             ctk.CTkLabel(
                 row_f, text=item['val'], width=170, anchor="w",
-                font=ctk.CTkFontFONT_BODY_B,
+                font=ctk.CTkFont(*FONT_BODY_B),
             ).grid(row=0, column=1, padx=PAD_XS, pady=7, sticky="w")
 
             # Build dropdown options
@@ -7954,7 +7955,7 @@ class BOMToolApp(ctk.CTk):
 
             ctk.CTkOptionMenu(
                 row_f, values=option_labels, variable=var,
-                font=ctk.CTkFontFONT_BODY, anchor="w",
+                font=ctk.CTkFont(*FONT_BODY), anchor="w",
                 fg_color=("#FFFFFF", "#252526"),
                 text_color=("#0F172A", "#E8E8E8"),
                 button_color=("#E2E8F0", "#1B2A4A"),
@@ -8633,9 +8634,12 @@ class BOMToolApp(ctk.CTk):
         total_rows      = 0
 
 
-        def _progress(msg):
-            self.after(0, lambda m=msg: self._update_loading_msg(
-                "Đang import dữ liệu vào BRAVO...\n" + m))
+        def _progress(msg, done=None, total=None):
+            def _ui(m=msg, d=done, t=total):
+                self._update_loading_msg("Đang import dữ liệu vào BRAVO...\n" + m)
+                if d is not None and t:
+                    self._update_loading_progress(d / t)
+            self.after(0, _ui)
 
         # ── Pha 1: resolve tất cả sections ───────────────────────────────────
         # section_data[section] = {
@@ -8780,7 +8784,9 @@ class BOMToolApp(ctk.CTk):
 
         # ── Pha 3: INSERT / export SQL ────────────────────────────────────────
         _total_all = sum(len(d['resolved']) for d in section_data.values())
-        _progress(f"Đang ghi {_total_all:,} dòng vào BRAVO...")
+        # U8: chuyển sang determinate mode ngay khi biết tổng số dòng
+        self.after(0, lambda t=_total_all: self._switch_loading_to_determinate(t))
+        _progress(f"Đang ghi {_total_all:,} dòng vào BRAVO...", done=0, total=_total_all)
         for section, data in section_data.items():
             resolved_rows   = data['resolved']
             col_kieu        = data['col_kieu']
@@ -8842,7 +8848,8 @@ class BOMToolApp(ctk.CTk):
                     cur.execute(sql_exec, exec_vals)
                 total_rows += 1
                 if not export_only and total_rows % 100 == 0:
-                    _progress(f"Đang ghi: {total_rows:,}/{_total_all:,} dòng...")
+                    _progress(f"Đang ghi: {total_rows:,}/{_total_all:,} dòng...",
+                              done=total_rows, total=_total_all)
 
         _progress(f"Hoàn tất: {total_rows:,} dòng chi tiết")
         return sql_lines if export_only else total_rows
@@ -9039,12 +9046,12 @@ class BOMToolApp(ctk.CTk):
         icon_frm = ctk.CTkFrame(dlg, fg_color=_c, corner_radius=22, width=44, height=44)
         icon_frm.pack(pady=(22, 0))
         icon_frm.pack_propagate(False)
-        ctk.CTkLabel(icon_frm, text=_i, font=ctk.CTkFontFONT_TITLE,
+        ctk.CTkLabel(icon_frm, text=_i, font=ctk.CTkFont(*FONT_TITLE),
                      text_color="white").place(relx=.5, rely=.5, anchor="center")
         ctk.CTkLabel(dlg, text=title,
-                     font=ctk.CTkFontFONT_LABEL).pack(pady=(10, 2), padx=24)
+                     font=ctk.CTkFont(*FONT_LABEL)).pack(pady=(10, 2), padx=24)
         ctk.CTkLabel(dlg, text=msg,
-                     font=ctk.CTkFontFONT_BODY,
+                     font=ctk.CTkFont(*FONT_BODY),
                      wraplength=320, justify="center").pack(pady=(0, 16), padx=24)
         ctk.CTkButton(dlg, text="OK", width=100,
                       command=dlg.destroy).pack(pady=(0, 20))
@@ -9056,6 +9063,25 @@ class BOMToolApp(ctk.CTk):
         dlg.geometry(f"{w}x{h}+{(sw-w)//2}+{(sh-h)//2}")
         dlg.focus_set()
         dlg.wait_window()
+
+    def _toast(self, msg, duration=2500, kind="info"):
+        """U9: Non-blocking toast overlay. kind = 'info' | 'success' | 'warning' | 'error'."""
+        _bg = {'info': '#4A9ECC', 'success': '#3A8A50', 'warning': '#C07828', 'error': '#B84040'}
+        bg = _bg.get(kind, _bg['info'])
+        t = ctk.CTkToplevel(self)
+        t.overrideredirect(True)
+        t.attributes('-topmost', True)
+        t.attributes('-alpha', 0.92)
+        frm = ctk.CTkFrame(t, fg_color=bg, corner_radius=10)
+        frm.pack(fill="both", expand=True, padx=0, pady=0)
+        ctk.CTkLabel(frm, text=msg, font=ctk.CTkFont(*FONT_BODY),
+                     text_color="white", wraplength=320).pack(padx=PAD_MD, pady=PAD_SM)
+        t.update_idletasks()
+        w = t.winfo_reqwidth() + 24
+        h = t.winfo_reqheight()
+        sw, sh = t.winfo_screenwidth(), t.winfo_screenheight()
+        t.geometry(f"{w}x{h}+{(sw - w) // 2}+{sh - h - 60}")
+        t.after(duration, t.destroy)
 
     def _show_export_success(self, title, msg, path):
         """Dialog xuất thành công với nút Mở file và Đóng."""
@@ -9069,12 +9095,12 @@ class BOMToolApp(ctk.CTk):
         icon_frm = ctk.CTkFrame(dlg, fg_color='#4A9ECC', corner_radius=22, width=44, height=44)
         icon_frm.pack(pady=(22, 0))
         icon_frm.pack_propagate(False)
-        ctk.CTkLabel(icon_frm, text='✓', font=ctk.CTkFontFONT_TITLE,
+        ctk.CTkLabel(icon_frm, text='✓', font=ctk.CTkFont(*FONT_TITLE),
                      text_color="white").place(relx=.5, rely=.5, anchor="center")
         ctk.CTkLabel(dlg, text=title,
-                     font=ctk.CTkFontFONT_LABEL).pack(pady=(10, 2), padx=24)
+                     font=ctk.CTkFont(*FONT_LABEL)).pack(pady=(10, 2), padx=24)
         ctk.CTkLabel(dlg, text=msg,
-                     font=ctk.CTkFontFONT_BODY,
+                     font=ctk.CTkFont(*FONT_BODY),
                      wraplength=340, justify="center").pack(pady=(0, 16), padx=24)
         btn_frm = ctk.CTkFrame(dlg, fg_color="transparent")
         btn_frm.pack(pady=(0, 20))
@@ -9109,12 +9135,12 @@ class BOMToolApp(ctk.CTk):
         icon_frm = ctk.CTkFrame(dlg, fg_color='#4A9ECC', corner_radius=22, width=44, height=44)
         icon_frm.pack(pady=(22, 0))
         icon_frm.pack_propagate(False)
-        ctk.CTkLabel(icon_frm, text='?', font=ctk.CTkFontFONT_TITLE,
+        ctk.CTkLabel(icon_frm, text='?', font=ctk.CTkFont(*FONT_TITLE),
                      text_color="white").place(relx=.5, rely=.5, anchor="center")
         ctk.CTkLabel(dlg, text=title,
-                     font=ctk.CTkFontFONT_LABEL).pack(pady=(10, 2), padx=24)
+                     font=ctk.CTkFont(*FONT_LABEL)).pack(pady=(10, 2), padx=24)
         ctk.CTkLabel(dlg, text=msg,
-                     font=ctk.CTkFontFONT_BODY,
+                     font=ctk.CTkFont(*FONT_BODY),
                      wraplength=320, justify="center").pack(pady=(0, 16), padx=24)
         btn_frm = ctk.CTkFrame(dlg, fg_color="transparent")
         btn_frm.pack(pady=(0, 20))
@@ -9141,13 +9167,14 @@ class BOMToolApp(ctk.CTk):
         dlg.transient(self)
         dlg.protocol("WM_DELETE_WINDOW", lambda: None)   # chặn đóng cửa sổ
         lbl = ctk.CTkLabel(dlg, text=msg,
-                     font=ctk.CTkFontFONT_MD,
+                     font=ctk.CTkFont(*FONT_MD),
                      wraplength=300, justify="center")
         lbl.pack(pady=(22, 10), padx=PAD_LG)
         self._loading_lbl = lbl   # giữ ref để update từ background thread
         pb = ctk.CTkProgressBar(dlg, mode="indeterminate", width=300)
         pb.pack(padx=PAD_LG, pady=(0, 22))
         pb.start()
+        self._loading_pb = pb     # U8: ref cho determinate mode khi biết _total_all
         # Canh giữa màn hình
         dlg.update_idletasks()
         w, h = 340, 160
@@ -9174,6 +9201,26 @@ class BOMToolApp(ctk.CTk):
             except Exception:
                 pass
 
+    def _switch_loading_to_determinate(self, total):
+        """U8: Chuyển progress bar sang determinate mode khi biết tổng số dòng."""
+        pb = getattr(self, '_loading_pb', None)
+        if pb:
+            try:
+                pb.stop()
+                pb.configure(mode="determinate")
+                pb.set(0.0)
+            except Exception:
+                pass
+
+    def _update_loading_progress(self, fraction):
+        """U8: Cập nhật giá trị progress bar (0.0–1.0). Gọi từ main thread."""
+        pb = getattr(self, '_loading_pb', None)
+        if pb:
+            try:
+                pb.set(min(max(fraction, 0.0), 1.0))
+            except Exception:
+                pass
+
     # ── Import entry point (button command) ───────────────────────────────────
     def _start_import(self):
         """
@@ -9183,6 +9230,12 @@ class BOMToolApp(ctk.CTk):
           3. Nếu export_only → _run_export_sql (main thread, cần file dialog)
           4. Nếu INSERT thật → hiện loading popup + thread _run_insert_bg
         """
+        # U10: re-entrancy guard — chặn double-click khi import đang chạy
+        if getattr(self, '_import_running', False):
+            return
+        self._import_running = True
+        self.btn_import.configure(state="disabled")
+
         import datetime
         self.mapping = load_mapping()
         fname = os.path.basename(self._current_file)
@@ -9485,6 +9538,10 @@ class BOMToolApp(ctk.CTk):
             # ── Phase 3 (Main Thread): hiển thị dialogs + khởi động insert ───
             def _abort():
                 """Đóng loading popup và đóng connection."""
+                # U10: clear re-entrancy flag khi abort
+                self._import_running = False
+                _n_err, _ = count_errors(self.val_errors or {})
+                self.btn_import.configure(state="normal" if _n_err == 0 else "disabled")
                 try:
                     if getattr(self, '_loading_dlg', None):
                         self._loading_dlg.destroy()
@@ -9632,6 +9689,11 @@ class BOMToolApp(ctk.CTk):
         self.after(0, lambda: self._finish_import(result))
 
     def _finish_import(self, result):
+        # U10: clear re-entrancy flag and restore btn_import state
+        self._import_running = False
+        _n_err, _ = count_errors(self.val_errors or {})
+        self.btn_import.configure(state="normal" if _n_err == 0 else "disabled")
+
         try:
             if self._loading_dlg:
                 self._loading_dlg.destroy()
