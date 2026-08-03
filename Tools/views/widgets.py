@@ -315,7 +315,7 @@ class Tooltip:
     def _hide(self, _=None):
         if self._tip:
             try: self._tip.destroy()
-            except: pass
+            except Exception: pass
             self._tip = None
 
 

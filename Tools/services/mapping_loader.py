@@ -2,7 +2,9 @@
 services/mapping_loader.py — Đọc CK_Mapping_v5.xlsx và build reverse-map.
 """
 import pandas as pd
-import re, os, sys
+import re
+import os
+import sys
 
 from services.utils import (
     _norm_vn, _nan_str,

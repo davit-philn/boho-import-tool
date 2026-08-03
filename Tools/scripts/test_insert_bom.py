@@ -4,7 +4,11 @@ Chạy: python Tools\test_insert_bom.py
 
 Mục đích: xác nhận cấu trúc cột + defaults đúng trước khi nối vào Excel.
 """
-import json, os, sys, datetime, uuid
+import json
+import os
+import sys
+import datetime
+import uuid
 from pathlib import Path
 
 BASE   = Path(__file__).parent.parent

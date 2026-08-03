@@ -1,11 +1,18 @@
 ﻿"""
 views/main_window.py — BOMToolApp: cửa sổ chính và toàn bộ tab UI.
 """
+import logging
 import pandas as pd
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 import customtkinter as ctk
-import re, os, sys, threading, datetime, unicodedata, io
+import re
+import os
+import sys
+import threading
+import datetime
+import unicodedata
+import io
 from openpyxl import load_workbook
 try:
     import msoffcrypto
@@ -19,6 +26,8 @@ except ImportError:
     _HAS_TKSHEET = False
 
 import json
+_log = logging.getLogger(__name__)
+
 from services.utils import (
     APP_VERSION, TAB_IMPORT, TAB_THDM, TAB_CATALOG,
     BASE_DIR, CONFIG_DIR, MAPPING_FILE, DB_CONFIG_FILE, SETTINGS_FILE,
@@ -105,7 +114,6 @@ class BOMToolApp(ctk.CTk):
     def _setup_styles(self):
         """TTK styles — dùng THEMES để đồng bộ Dark/Light."""
         mode = ctk.get_appearance_mode()  # "Dark" or "Light"
-        is_dark = mode == "Dark"
         t = THEMES.get(mode, THEMES["Dark"])
 
         s = ttk.Style()
@@ -1057,7 +1065,7 @@ class BOMToolApp(ctk.CTk):
             if not text or text == "—": _hide(); return
             if self._tree_tip:
                 try: self._tree_tip.destroy()
-                except: pass
+                except Exception: pass
             tip = tk.Toplevel(self)
             tip.wm_overrideredirect(True)
             tip.wm_geometry(f"+{event.x_root+16}+{event.y_root+12}")
@@ -1068,7 +1076,7 @@ class BOMToolApp(ctk.CTk):
         def _hide(*_):
             if getattr(self, "_tree_tip", None):
                 try: self._tree_tip.destroy()
-                except: pass
+                except Exception: pass
                 self._tree_tip = None
         if isinstance(self.tree, ttk.Treeview):
             # Tooltip + copy thủ công chỉ cần cho Treeview;
@@ -2734,7 +2742,6 @@ class BOMToolApp(ctk.CTk):
             FONT_AUTO   = Font(name="Segoe UI", size=9,  italic=True, color="375623")
 
             ALIGN_C = Alignment(horizontal="center", vertical="center", wrap_text=True)
-            ALIGN_L = Alignment(horizontal="left",   vertical="center", wrap_text=True)
 
             thin_side = Side(style="thin", color="AAAAAA")
             BORDER    = Border(left=thin_side, right=thin_side,
@@ -4775,7 +4782,8 @@ class BOMToolApp(ctk.CTk):
     # ── THDM: File picker Excel ────────────────────────────────────────────────
 
     def _thdm_pick_excel(self):
-        import tkinter.filedialog as fd, os
+        import tkinter.filedialog as fd
+        import os
         path = fd.askopenfilename(
             title="Chọn file Excel THDM",
             filetypes=[("Excel", "*.xlsx *.xls *.xlsm"), ("All files", "*.*")])
@@ -6295,21 +6303,21 @@ class BOMToolApp(ctk.CTk):
         )
 
         lines = [
-            f"-- ===== THDM INSERT preview (mapping-driven) =====",
+            "-- ===== THDM INSERT preview (mapping-driven) =====",
             f"-- Dự án     (ProductId):  {self._thdm_selected_product_id}",
             f"-- Đơn hàng  (BizDocId_SO): {order_id}",
             f"-- BOM chọn  ({len(bom_ids)} BOM): {bom_list}",
             f"-- Người lập (CreatedBy):  {ui_vals['creator']}",
             f"-- Đợt       (PeriodId):   {self._thdm_selected_period_id}",
-            f"-- NOTE: /*SP_NAME*/ = giá trị do SP sinh ra khi INSERT thật",
-            f"",
+            "-- NOTE: /*SP_NAME*/ = giá trị do SP sinh ra khi INSERT thật",
+            "",
             f"-- [1] Tạo phiếu THDM (parent) — {len(ins_hcols)} cột từ THDM_HEADER mapping",
             f"DECLARE @BizDocId VARCHAR(24) = /*{sp_thdm_hdr[0]['sp_name'] if sp_thdm_hdr else 'SP'}*/NULL;",
             f"INSERT INTO {view_hdr}",
             f"    ({hdr_cols_str})",
-            f"VALUES",
+            "VALUES",
             f"    ({hdr_vals_str});",
-            f"",
+            "",
             f"-- [2] Insert {len(self._thdm_preview_data)} dòng vật tư (child — tất cả sections)",
         ]
 
@@ -6328,10 +6336,10 @@ class BOMToolApp(ctk.CTk):
             cols   = list(sample.keys())
 
             lines += [
-                f"",
+                "",
                 f"-- Section {sec} ({len(sec_rows)} dòng)",
                 f"INSERT INTO {view_sec} ({', '.join(cols)})",
-                f"VALUES",
+                "VALUES",
             ]
             for idx, r in enumerate(sec_rows):
                 resolved = self._resolve_thdm_thvt_row(r, "@BizDocId", idx + 1, sec_map, now)
@@ -6883,7 +6891,8 @@ class BOMToolApp(ctk.CTk):
         Bảng chưa được tạo trên DB → bỏ qua êm, không làm phiền user."""
         def _worker():
             try:
-                import getpass, socket
+                import getpass
+                import socket
                 conn = self._get_db_conn(timeout_sec=5)
                 cur  = conn.cursor()
                 cur.execute(
@@ -7229,7 +7238,6 @@ class BOMToolApp(ctk.CTk):
         tbl  = self.tables[table_name]
         df   = tbl["df"]
         errs = self.val_errors.get(table_name, [])
-        err_msgs = [e["message"] for e in errs if e["severity"] == "error"]
 
         n_rows = len(df)
         n_cols = len(df.columns)
@@ -8188,9 +8196,9 @@ class BOMToolApp(ctk.CTk):
                     return None, 'codinh'
                 return '', 'codinh'
             try:    return int(mac_dinh),   'codinh'
-            except: pass
+            except (ValueError, TypeError): pass
             try:    return float(mac_dinh), 'codinh'
-            except: pass
+            except (ValueError, TypeError): pass
             return mac_dinh, 'codinh'
 
         # ── HeThong: system-generated ────────────────────────────────────────
@@ -8282,12 +8290,12 @@ class BOMToolApp(ctk.CTk):
                     elif kieu_dl in ('number', 'decimal', 'float', 'numeric'):
                         qty_str = re.sub(r'[^\d,\.]', '', str(raw)).replace(',', '.')
                         try:    raw = float(qty_str) if qty_str else None
-                        except: raw = None
+                        except (ValueError, TypeError): raw = None
                     elif kieu_dl == 'int':
                         try:
                             qty_str = re.sub(r'[^\d,\.]', '', str(raw)).replace(',', '.')
                             raw = int(float(qty_str)) if qty_str else None
-                        except: raw = None
+                        except (ValueError, TypeError): raw = None
                 return raw, 'excel_direct'
 
             # ── Generic lookup engine ─────────────────────────────────────
@@ -8338,7 +8346,8 @@ class BOMToolApp(ctk.CTk):
         - builtin_order: số thứ tự hàng (1, 2, 3...)
         - bom_detail_type: 2 / 3 / 4
         """
-        import datetime as _dt, math as _math
+        import datetime as _dt
+        import math as _math
 
         # Các field copy từ B20BOM parent
         PARENT_FIELDS = {
@@ -8450,9 +8459,9 @@ class BOMToolApp(ctk.CTk):
                     raw = self._current_creator_user_id
                 elif mac and mac not in ('', 'NULL'):
                     try:    raw = int(mac)
-                    except:
+                    except (ValueError, TypeError):
                         try:    raw = float(mac)
-                        except: raw = mac
+                        except (ValueError, TypeError): raw = mac
 
             # Type coercion (chỉ khi không lookup)
             if raw is not None and not kl:
@@ -8462,17 +8471,17 @@ class BOMToolApp(ctk.CTk):
                     elif isinstance(raw, str):
                         for fmt in _DATE_FMTS:
                             try: raw = _dt.datetime.strptime(raw, fmt).date(); break
-                            except: pass
+                            except (ValueError, TypeError): pass
                 elif kd in ('number', 'decimal', 'float', 'numeric'):
                     try:
                         qs = re.sub(r'[^\d,\.]', '', str(raw)).replace(',', '.')
                         raw = float(qs) if qs else None
-                    except: raw = None
+                    except (ValueError, TypeError): raw = None
                 elif kd == 'int':
                     try:
                         qs = re.sub(r'[^\d,\.]', '', str(raw)).replace(',', '.')
                         raw = int(float(qs)) if qs else None
-                    except: raw = None
+                    except (ValueError, TypeError): raw = None
 
             # Lookup master nếu có (cùng engine với HEADER)
             if kl and ss and lv:
@@ -9178,7 +9187,8 @@ class BOMToolApp(ctk.CTk):
         self._ps_bom_caches      = {}
 
         def _prescan_worker():
-            import math as _math, datetime as _dt
+            import math as _math
+            import datetime as _dt
             try:
                 _now       = _dt.datetime.now()
                 _meta      = self.global_meta
@@ -9287,7 +9297,8 @@ class BOMToolApp(ctk.CTk):
 
         def _header_resolve_bg():
             # ── Phase 2 (Background Thread): toàn bộ DB work — KHÔNG GỌI UI TRỰC TIẾP ──
-            import datetime as _dt, traceback as _tb
+            import datetime as _dt
+            import traceback as _tb
             _result = {
                 'ok': False, 'error': None,
                 'row': {}, 'lookup_log': {},

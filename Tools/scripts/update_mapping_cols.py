@@ -7,7 +7,8 @@ Script tạo/cập nhật CK_Mapping_v2.xlsx:
 Chạy 1 lần sau khi đóng Excel:
     python Tools/update_mapping_cols.py
 """
-import os, sys
+import os
+import sys
 import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter

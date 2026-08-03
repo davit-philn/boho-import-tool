@@ -8,7 +8,9 @@ patch_mapping.py — chạy 1 lần để:
 Chạy (đóng Excel trước):
     python Tools/patch_mapping.py
 """
-import os, sys, unicodedata
+import os
+import sys
+import unicodedata
 import openpyxl
 from openpyxl.styles import Alignment, Border, Side
 from copy import copy

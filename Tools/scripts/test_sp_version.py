@@ -1,7 +1,9 @@
 """
 test_sp_version.py — test gọi usp_B20BOM_AutoVersion trực tiếp
 """
-import pyodbc, json, os
+import pyodbc
+import json
+import os
 
 cfg_path = os.path.join(os.path.dirname(__file__), 'config', 'db_config.json')
 with open(cfg_path) as f:

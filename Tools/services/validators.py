@@ -1,7 +1,8 @@
 ﻿"""
 services/validators.py — Validate layer 1: kiểu dữ liệu, required fields, length.
 """
-import re, datetime
+import re
+import datetime
 import pandas as pd
 
 from services.utils import _norm_vn

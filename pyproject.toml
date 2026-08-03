@@ -1,0 +1,16 @@
+[tool.pytest.ini_options]
+testpaths   = ["tests"]
+pythonpath  = ["Tools"]
+addopts     = "-v --tb=short"
+
+[tool.ruff]
+target-version = "py310"
+line-length    = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "W"]
+ignore = [
+    "E501",   # line too long  — codebase hiện tại dùng dòng dài
+    "E402",   # module-level import not at top  — vài chỗ import trong function
+    "F401",   # imported but unused  — fix riêng, không block CI
+]

@@ -1,7 +1,14 @@
 ﻿"""
 services/bom_parser.py — Parse BOM Excel, THDM sheets, shared row resolver.
 """
-import re, os, sys, datetime, unicodedata, io, math
+import re
+import os
+import sys
+import datetime
+import unicodedata
+import io
+import math
+import logging
 import pandas as pd
 from openpyxl import load_workbook
 
@@ -11,6 +18,13 @@ try:
 except ImportError:
     _HAS_MSOFFCRYPTO = False
 
+try:                          # A1: guard — bom_parser chạy được không cần GUI
+    import tkinter as tk
+    _HAS_TK = True
+except ImportError:
+    tk = None
+    _HAS_TK = False
+
 from services.utils import _norm_vn, _nan_str, guess_col_align
 from services.mapping_loader import (
     load_mapping, build_reverse_map, match_col_to_sql,
@@ -19,6 +33,8 @@ from services.mapping_loader import (
     SECTION_STT_PATTERN, NUMERIC_STT_PATTERN, _ROMAN_SIMPLE_RE,
     HEADER_ANCHORS,
 )
+_log = logging.getLogger(__name__)
+
 def _is_roman_numeral(s: str) -> bool:
     """True nếu s là số La Mã thực dùng trong BOM (I–XXXIX, chỉ dùng I/V/X).
     Loại trừ chữ cái đơn A–Z làm section header (A,B,C,D không khớp pattern này)."""
@@ -507,7 +523,7 @@ def _parse_sheet(ws, sheet_name, live_meta_rows=None, meta_keys=None, hidden_row
         if not stt:
             def _is_non_numeric(v):
                 try: float(str(v).replace(',', '.')); return False
-                except: return True
+                except (ValueError, TypeError): return True
             _dim_text = any(_is_non_numeric(val) for col, val in rd.items()
                             if val and _SIGNER_COL_RE.search(col))
             _slg_h_sig = next((h for h in rd
@@ -1236,9 +1252,9 @@ def _resolve_row_mapping(mapping_recs, ctx, get_excel_val=None):
                         val = (ctx.get('ui_values') or {}).get('creator')
                     elif mac and mac_upper not in ('NULL', 'NONE', ''):
                         try:    val = int(mac)
-                        except:
+                        except (ValueError, TypeError):
                             try:    val = float(mac)
-                            except: val = mac
+                            except (ValueError, TypeError): val = mac
                 row_out[sql_col] = val
             continue
 
@@ -1250,9 +1266,9 @@ def _resolve_row_mapping(mapping_recs, ctx, get_excel_val=None):
                 row_out[sql_col] = None if kieu_dl in ('date', 'datetime') else ''
             else:
                 try:    row_out[sql_col] = int(mac)
-                except:
+                except (ValueError, TypeError):
                     try:    row_out[sql_col] = float(mac)
-                    except: row_out[sql_col] = mac
+                    except (ValueError, TypeError): row_out[sql_col] = mac
             continue
 
         # ── HeThong ───────────────────────────────────────────────────────────

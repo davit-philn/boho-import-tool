@@ -2,7 +2,8 @@
 Chạy script này để dump toàn bộ CK_Mapping_v2.xlsx ra console.
     python Tools/dump_mapping.py
 """
-import os, json
+import os
+import json
 import openpyxl
 
 MAPPING_FILE = os.path.join(os.path.dirname(__file__), 'config', 'CK_Mapping_v2.xlsx')

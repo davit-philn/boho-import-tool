@@ -1,13 +1,14 @@
 """
 Đọc nội dung file .docx và in ra màn hình (không cần cài thêm thư viện)
 """
-import zipfile, re, sys, os
+import zipfile
+import re
+import sys
+import os
 
 def read_docx(path):
     with zipfile.ZipFile(path) as z:
         xml = z.read("word/document.xml").decode("utf-8")
-    # Tách text từ <w:t> tags
-    texts = re.findall(r'<w:t[^>]*>([^<]*)</w:t>', xml)
     lines = []
     # Tách đoạn theo <w:p>
     paras = re.split(r'</w:p>', xml)
