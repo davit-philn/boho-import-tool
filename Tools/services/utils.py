@@ -319,3 +319,23 @@ C = {
     "field_row_fg": "#A0C4FF",
 }
 
+# ── Typography constants ──────────────────────────────────────────────────────
+FONT_BODY    = ("Segoe UI", 11)
+FONT_BODY_B  = ("Segoe UI", 11, "bold")
+FONT_SMALL   = ("Segoe UI", 10)
+FONT_SMALL_B = ("Segoe UI", 10, "bold")
+FONT_SMALL_I = ("Segoe UI", 10, "italic")
+FONT_MD      = ("Segoe UI", 12)
+FONT_MD_B    = ("Segoe UI", 12, "bold")
+FONT_LABEL   = ("Segoe UI", 13, "bold")
+FONT_LABEL_N = ("Segoe UI", 13)
+FONT_TITLE   = ("Segoe UI", 18, "bold")
+FONT_HERO    = ("Segoe UI", 48)
+FONT_ICON    = ("Segoe UI", 42, "bold")
+
+# ── Spacing tokens ────────────────────────────────────────────────────────────
+PAD_XS = 4     # tight inline (icon-to-label)
+PAD_SM = 8     # default element gap
+PAD_MD = 12    # section / card padding
+PAD_LG = 20    # panel / page margin
+
