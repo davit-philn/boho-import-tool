@@ -1365,7 +1365,7 @@ class BOMToolApp(ctk.CTk):
         _SUB_TAB_VIEW   = "📋  Danh sách vật tư"
         _SUB_TAB_IMPORT = "📥  Import dữ liệu"
         self._catalog_subtabs = ctk.CTkTabview(tab,
-            fg_color=("gray88", "gray14"),
+            fg_color=("gray88", "transparent"),
             segmented_button_fg_color=("gray85", "#252526"),
             segmented_button_selected_color=("#1D4ED8", "#2563EB"),
             segmented_button_selected_hover_color=("#1E40AF", "#1D4ED8"),
