@@ -769,10 +769,12 @@ class BOMToolApp(ctk.CTk):
                     if self._skipped_sheets else "")
 
         mapping_ok = bool(self.mapping)
+        _mapping_text_color = ("#16A34A","#4ADE80") if mapping_ok else ("#D97706","#D7BA7D")
         ctk.CTkButton(right_bar, text="⚙️  Mapping",
             command=self._open_mapping_window,
             fg_color="transparent", border_width=1,
-            text_color=("#16A34A","#4ADE80") if mapping_ok else ("#D97706","#D7BA7D"),
+            text_color=_mapping_text_color,
+            border_color=_mapping_text_color,
             hover_color=("gray90","gray25"),
             font=ctk.CTkFont("Segoe UI", 11),
             width=110, height=28, corner_radius=6).pack(side=tk.LEFT, padx=(0, 4))
@@ -781,6 +783,7 @@ class BOMToolApp(ctk.CTk):
             command=self._open_settings,
             fg_color="transparent", border_width=1,
             text_color=("gray50","gray60"),
+            border_color=("gray50","gray60"),
             hover_color=("gray90","gray25"),
             font=ctk.CTkFont("Segoe UI", 11),
             width=34, height=28, corner_radius=6)
@@ -1404,6 +1407,7 @@ class BOMToolApp(ctk.CTk):
             font=ctk.CTkFont("Segoe UI", 11, "bold"),
             fg_color="transparent", border_width=1,
             text_color=("#3B82F6","#60A5FA"),
+            border_color=("#3B82F6","#60A5FA"),
             hover_color=("#DBEAFE","#1E3A5F"),
             height=32, corner_radius=6, state="disabled")
         self.btn_catalog_export.pack(side=tk.LEFT, padx=(0,8), pady=8)
@@ -1516,6 +1520,7 @@ class BOMToolApp(ctk.CTk):
             font=ctk.CTkFont("Segoe UI", 11, "bold"),
             fg_color="transparent", border_width=1,
             text_color=("#059669","#34D399"),
+            border_color=("#059669","#34D399"),
             hover_color=("#D1FAE5","#064E3B"),
             height=32, corner_radius=6, state="disabled")
         self.btn_export_template.pack(side=tk.LEFT, padx=(0,4), pady=8)
@@ -1528,6 +1533,7 @@ class BOMToolApp(ctk.CTk):
             font=ctk.CTkFont("Segoe UI", 11, "bold"),
             fg_color="transparent", border_width=1,
             text_color=("#D97706","#FCD34D"),
+            border_color=("#D97706","#FCD34D"),
             hover_color=("#FEF3C7","#3D2A00"),
             height=32, corner_radius=6)
         self.btn_catalog_file_select.pack(side=tk.LEFT, padx=(0,4), pady=8)
@@ -1537,6 +1543,7 @@ class BOMToolApp(ctk.CTk):
             font=ctk.CTkFont("Segoe UI", 11, "bold"),
             fg_color="transparent", border_width=1,
             text_color=("#7C3AED","#A78BFA"),
+            border_color=("#7C3AED","#A78BFA"),
             hover_color=("#EDE9FE","#2D1B69"),
             height=32, corner_radius=6, state="disabled")
         self.btn_import_template.pack(side=tk.LEFT, padx=(0,4), pady=8)
@@ -1546,6 +1553,7 @@ class BOMToolApp(ctk.CTk):
             font=ctk.CTkFont("Segoe UI", 11, "bold"),
             fg_color="transparent", border_width=1,
             text_color=("#0369A1","#38BDF8"),
+            border_color=("#0369A1","#38BDF8"),
             hover_color=("#E0F2FE","#0C4A6E"),
             height=32, corner_radius=6, state="disabled")
         # btn_preview_sql: tạm ẩn, giữ widget để state logic không bị lỗi
@@ -3968,6 +3976,7 @@ class BOMToolApp(ctk.CTk):
             font=ctk.CTkFont("Segoe UI", 10),
             fg_color="transparent", border_width=1,
             text_color=("gray40","gray65"),
+            border_color=("gray50","gray55"),
             hover_color=("gray80","gray25"),
             width=80, height=26, corner_radius=8)
         self.btn_thdm_sel_all.pack(side=tk.LEFT, padx=(6,2), pady=5)
@@ -3977,6 +3986,7 @@ class BOMToolApp(ctk.CTk):
             font=ctk.CTkFont("Segoe UI", 10),
             fg_color="transparent", border_width=1,
             text_color=("gray40","gray65"),
+            border_color=("gray50","gray55"),
             hover_color=("gray80","gray25"),
             width=60, height=26, corner_radius=8)
         self.btn_thdm_desel_all.pack(side=tk.LEFT, padx=(0,6), pady=5)
@@ -4012,6 +4022,7 @@ class BOMToolApp(ctk.CTk):
             font=ctk.CTkFont("Segoe UI", 11),
             fg_color="transparent", border_width=1,
             text_color=("gray40","gray65"),
+            border_color=("gray50","gray55"),
             hover_color=("gray80","gray25"),
             height=28, corner_radius=5)
         self.btn_thdm_pick_excel.pack(side=tk.LEFT, padx=(6,8), pady=7)
@@ -4194,6 +4205,7 @@ class BOMToolApp(ctk.CTk):
             font=ctk.CTkFont("Segoe UI", 12),
             fg_color="transparent", border_width=1,
             text_color=("gray50", "gray60"),
+            border_color=("gray50", "gray55"),
             hover_color=("gray90", "gray25"),
             width=120, height=30, corner_radius=8, state="disabled")
 
@@ -4202,6 +4214,7 @@ class BOMToolApp(ctk.CTk):
             font=ctk.CTkFont("Segoe UI", 12),
             fg_color="transparent", border_width=1,
             text_color=("gray50", "gray60"),
+            border_color=("gray50", "gray55"),
             hover_color=("gray90", "gray25"),
             width=100, height=30, corner_radius=8, state="disabled")
 
@@ -4210,6 +4223,7 @@ class BOMToolApp(ctk.CTk):
             font=ctk.CTkFont("Segoe UI", 12, "bold"),
             fg_color="transparent", border_width=1,
             text_color=("#3B82F6", "#60A5FA"),
+            border_color=("#3B82F6", "#60A5FA"),
             hover_color=("#DBEAFE", "#1E3A5F"),
             width=110, height=30, corner_radius=8, state="disabled")
         self.btn_thdm_validate.pack(side=tk.LEFT, padx=(0, 4))
@@ -6820,6 +6834,7 @@ class BOMToolApp(ctk.CTk):
             command=self._load_db_log,
             fg_color="transparent", border_width=1,
             text_color=("#3B82F6","#007ACC"),
+            border_color=("#3B82F6","#007ACC"),
             hover_color=("#DBEAFE","#1E3A5F"),
             font=ctk.CTkFont("Segoe UI", 12),
             width=90, height=24, corner_radius=6)
@@ -6830,7 +6845,8 @@ class BOMToolApp(ctk.CTk):
         ctk.CTkButton(hdr, text="🗑  Xóa",
             command=self._clear_log,
             fg_color="transparent", border_width=1,
-            text_color="gray", hover_color=("gray90","gray25"),
+            text_color="gray", border_color=("gray50","gray50"),
+            hover_color=("gray90","gray25"),
             font=ctk.CTkFont("Segoe UI", 12),
             width=70, height=24, corner_radius=6).grid(
             row=0, column=3, padx=(4, 4))
@@ -6839,6 +6855,7 @@ class BOMToolApp(ctk.CTk):
             command=self._toggle_log,
             fg_color="transparent", border_width=1,
             text_color=("#3B82F6","#007ACC"),
+            border_color=("#3B82F6","#007ACC"),
             hover_color=("#DBEAFE","#1E3A5F"),
             font=ctk.CTkFont("Segoe UI", 12, "bold"),
             width=90, height=24, corner_radius=6)
@@ -7970,6 +7987,7 @@ class BOMToolApp(ctk.CTk):
             command=on_skip_all, width=180,
             fg_color="transparent", border_width=1,
             text_color=("gray50", "gray60"),
+            border_color=("gray50", "gray55"),
             hover_color=("gray90", "gray25"),
         ).pack(side="right")
 
