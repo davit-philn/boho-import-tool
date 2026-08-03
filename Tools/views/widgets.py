@@ -10,7 +10,7 @@ try:
 except ImportError:
     _HAS_TKSHEET = False
 
-from services.utils import guess_col_align
+from services.utils import guess_col_align, THEMES
 
 # ── Compat wrappers: business logic gọi .config(fg=, bg=) như tkinter thường ─
 class CLabel(ctk.CTkLabel):
@@ -301,13 +301,14 @@ class Tooltip:
         text = self._get()
         if not text: return
         self._hide()
+        dt = THEMES[ctk.get_appearance_mode()]
         x = self._w.winfo_rootx()
         y = self._w.winfo_rooty() + self._w.winfo_height() + 6
         self._tip = tk.Toplevel(self._w)
         self._tip.wm_overrideredirect(True)
         self._tip.wm_geometry(f"+{x}+{y}")
         tk.Label(self._tip, text=text,
-                 bg="#252526", fg="#9CDCFE",
+                 bg=dt["bg_card"], fg="#9CDCFE",
                  font=("Segoe UI", 12),
                  relief="flat", padx=10, pady=5,
                  wraplength=700, justify="left").pack()
@@ -331,11 +332,13 @@ class SheetTable:
     _ANCHOR_MAP = {"w": "w", "e": "e", "center": "center", "c": "center"}
 
     def __init__(self, master, columns=(), **_kw):
+        dt = THEMES[ctk.get_appearance_mode()]
+        _sheet_theme = "light" if ctk.get_appearance_mode() == "Light" else "dark"
         self.sheet = tksheet.Sheet(
             master,
             headers=[str(c) for c in columns],
             data=[],
-            theme="dark",
+            theme=_sheet_theme,
             show_row_index=False,
             show_top_left=False,
             row_height=30,
@@ -352,43 +355,43 @@ class SheetTable:
             "rc_insert_row", "rc_delete_row",
             "copy", "cut", "paste", "delete", "undo", "edit_cell",
         )
-        # Fine-tune dark theme — tên option chính xác của tksheet 7.x (short names)
+        # Fine-tune theme — tên option chính xác của tksheet 7.x (short names)
         try:
             self.sheet.set_options(
-                table_bg="#1E1E1E",
-                table_fg="#E8E8E8",
-                header_bg="#1B2A4A",
-                header_fg="#FFFFFF",
-                index_bg="#252526",
-                index_fg="#E8E8E8",
-                top_left_bg="#1B2A4A",
+                table_bg=dt["sheet_table_bg"],
+                table_fg=dt["sheet_table_fg"],
+                header_bg=dt["sheet_header_bg"],
+                header_fg=dt["sheet_header_fg"],
+                index_bg=dt["sheet_index_bg"],
+                index_fg=dt["sheet_index_fg"],
+                top_left_bg=dt["sheet_header_bg"],
                 show_horizontal_grid=True,
                 show_vertical_grid=True,
-                table_grid_fg="#888888",
-                header_grid_fg="#888888",
-                index_grid_fg="#888888",
-                outline_color="#888888",
-                # Dark scrollbar
-                vertical_scroll_troughcolor="#252526",
-                vertical_scroll_not_active_bg="#3E3E42",
-                vertical_scroll_not_active_fg="#3E3E42",
-                vertical_scroll_active_bg="#606066",
-                vertical_scroll_active_fg="#606066",
-                vertical_scroll_pressed_bg="#606066",
-                vertical_scroll_pressed_fg="#606066",
-                vertical_scroll_bordercolor="#252526",
-                vertical_scroll_lightcolor="#252526",
-                vertical_scroll_darkcolor="#252526",
-                horizontal_scroll_troughcolor="#252526",
-                horizontal_scroll_not_active_bg="#3E3E42",
-                horizontal_scroll_not_active_fg="#3E3E42",
-                horizontal_scroll_active_bg="#606066",
-                horizontal_scroll_active_fg="#606066",
-                horizontal_scroll_pressed_bg="#606066",
-                horizontal_scroll_pressed_fg="#606066",
-                horizontal_scroll_bordercolor="#252526",
-                horizontal_scroll_lightcolor="#252526",
-                horizontal_scroll_darkcolor="#252526",
+                table_grid_fg=dt["sheet_grid"],
+                header_grid_fg=dt["sheet_grid"],
+                index_grid_fg=dt["sheet_grid"],
+                outline_color=dt["sheet_grid"],
+                # Scrollbar
+                vertical_scroll_troughcolor=dt["scroll_track"],
+                vertical_scroll_not_active_bg=dt["scroll_thumb"],
+                vertical_scroll_not_active_fg=dt["scroll_thumb"],
+                vertical_scroll_active_bg=dt["scroll_thumb_active"],
+                vertical_scroll_active_fg=dt["scroll_thumb_active"],
+                vertical_scroll_pressed_bg=dt["scroll_thumb_active"],
+                vertical_scroll_pressed_fg=dt["scroll_thumb_active"],
+                vertical_scroll_bordercolor=dt["scroll_track"],
+                vertical_scroll_lightcolor=dt["scroll_track"],
+                vertical_scroll_darkcolor=dt["scroll_track"],
+                horizontal_scroll_troughcolor=dt["scroll_track"],
+                horizontal_scroll_not_active_bg=dt["scroll_thumb"],
+                horizontal_scroll_not_active_fg=dt["scroll_thumb"],
+                horizontal_scroll_active_bg=dt["scroll_thumb_active"],
+                horizontal_scroll_active_fg=dt["scroll_thumb_active"],
+                horizontal_scroll_pressed_bg=dt["scroll_thumb_active"],
+                horizontal_scroll_pressed_fg=dt["scroll_thumb_active"],
+                horizontal_scroll_bordercolor=dt["scroll_track"],
+                horizontal_scroll_lightcolor=dt["scroll_track"],
+                horizontal_scroll_darkcolor=dt["scroll_track"],
             )
         except Exception:
             pass

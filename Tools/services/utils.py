@@ -212,6 +212,20 @@ THEMES = {
         "scroll_track":       "#252526",
         "scroll_thumb":       "#3E3E42",
         "scroll_thumb_active":"#606066",
+        # Deep bg / overlay
+        "bg_deep":            "#161616",
+        "overlay_bg":         "#181818",
+        # Dialog inputs & buttons
+        "dlg_input_bg":       "#334155",
+        "btn_primary":        "#2563EB",
+        "btn_primary_hover":  "#1D4ED8",
+        "btn_sec_hover":      "#475569",
+        # Danger / error panel
+        "danger_hdr_bg":      "#251515",
+        "danger_badge_bg":    "#7B1A1A",
+        "danger_badge_fg":    "#FFCCCC",
+        "danger_text":        "#CC8888",
+        "danger_list_bg":     "#1A1212",
     },
     "Light": {
         # App backgrounds
@@ -263,6 +277,20 @@ THEMES = {
         "scroll_track":       "#F1F5F9",
         "scroll_thumb":       "#CBD5E1",
         "scroll_thumb_active":"#94A3B8",
+        # Deep bg / overlay
+        "bg_deep":            "#E2E8F0",
+        "overlay_bg":         "#F0F4F8",
+        # Dialog inputs & buttons
+        "dlg_input_bg":       "#F1F5F9",
+        "btn_primary":        "#2563EB",
+        "btn_primary_hover":  "#1D4ED8",
+        "btn_sec_hover":      "#D1D5DB",
+        # Danger / error panel
+        "danger_hdr_bg":      "#FFF0F0",
+        "danger_badge_bg":    "#DC2626",
+        "danger_badge_fg":    "#FFFFFF",
+        "danger_text":        "#991B1B",
+        "danger_list_bg":     "#FEF2F2",
     },
 }
 

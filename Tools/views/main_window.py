@@ -558,8 +558,8 @@ class BOMToolApp(ctk.CTk):
 
     def _show_startup_overlay(self):
         """Overlay kiểm tra kết nối DB khi khởi động. Che toàn bộ main UI."""
-        BG = "#181818"
-        overlay = ctk.CTkFrame(self, fg_color=BG, corner_radius=0)
+        dt = THEMES[ctk.get_appearance_mode()]
+        overlay = ctk.CTkFrame(self, fg_color=dt["overlay_bg"], corner_radius=0)
         overlay.place(x=0, y=0, relwidth=1, relheight=1)
         overlay.lift()
         self._startup_overlay = overlay
@@ -569,43 +569,43 @@ class BOMToolApp(ctk.CTk):
         center.place(relx=0.5, rely=0.46, anchor="center")
 
         # Logo circle
-        logo_wrap = ctk.CTkFrame(center, fg_color=C["bg"],
+        logo_wrap = ctk.CTkFrame(center, fg_color=dt["bg_main"],
                                  width=88, height=88, corner_radius=44)
         logo_wrap.pack(pady=(0, 22))
         logo_wrap.pack_propagate(False)
         ctk.CTkLabel(logo_wrap, text="B",
                      font=ctk.CTkFont("Segoe UI", 42, "bold"),
-                     text_color="#2563EB").place(relx=0.5, rely=0.48, anchor="center")
+                     text_color=dt["btn_primary"]).place(relx=0.5, rely=0.48, anchor="center")
 
         # Tên app
         ctk.CTkLabel(center, text="BOHO IMPORT BOM/THDM",
                      font=ctk.CTkFont("Segoe UI", 24, "bold"),
-                     text_color="#F0F0F0").pack()
+                     text_color=dt["text_main"]).pack()
         ctk.CTkLabel(center, text="v1  —  BOHO",
                      font=ctk.CTkFont("Segoe UI", 12),
-                     text_color="#555555").pack(pady=(3, 22))
+                     text_color=dt["text_muted"]).pack(pady=(3, 22))
 
         # Separator
-        ctk.CTkFrame(center, fg_color="#2A2A2A", height=1, width=340).pack(pady=(0, 22))
+        ctk.CTkFrame(center, fg_color=dt["border"], height=1, width=340).pack(pady=(0, 22))
 
         # Thông tin kết nối
         cfg = self.db_cfg or {}
         server   = cfg.get("server",   "Chưa cấu hình")
         database = cfg.get("database", "—")
-        db_card = ctk.CTkFrame(center, fg_color="#222222", corner_radius=10)
+        db_card = ctk.CTkFrame(center, fg_color=dt["bg_main"], corner_radius=10)
         db_card.pack(pady=(0, 26), ipadx=24, ipady=4)
         ctk.CTkLabel(db_card, text=f"🖧  {server}",
                      font=ctk.CTkFont("Segoe UI", 13),
-                     text_color="#CCCCCC").pack(padx=28, pady=(12, 3))
+                     text_color=dt["tv_text"]).pack(padx=28, pady=(12, 3))
         ctk.CTkLabel(db_card, text=f"📋  {database}",
                      font=ctk.CTkFont("Segoe UI", 12),
-                     text_color="#777777").pack(padx=28, pady=(0, 12))
+                     text_color=dt["text_muted"]).pack(padx=28, pady=(0, 12))
 
         # Status label
         self._startup_status_lbl = ctk.CTkLabel(
             center, text="⏳  Đang kiểm tra kết nối...",
             font=ctk.CTkFont("Segoe UI", 13),
-            text_color="#888888")
+            text_color=dt["text_muted"])
         self._startup_status_lbl.pack()
 
         # Button frame (ẩn, chỉ hiện khi có lỗi)
@@ -637,17 +637,18 @@ class BOMToolApp(ctk.CTk):
 
     def _startup_check_done(self, ok, error, attempt=1):
         """Main thread: cập nhật UI startup sau khi có kết quả kiểm tra."""
+        dt = THEMES[ctk.get_appearance_mode()]
         if ok:
             self._startup_status_lbl.configure(
                 text="✅  Kết nối thành công — Đang mở ứng dụng...",
-                text_color="#4EC9B0")
+                text_color=dt["log_ok"])
             self.after(1200, self._dismiss_startup_overlay)
         else:
             if attempt < 3:
                 # Tự động thử lại tối đa 3 lần sau 2s — cho server/VPN kịp ổn định
                 self._startup_status_lbl.configure(
                     text=f"⏳  Đang thử lại ({attempt}/3)...",
-                    text_color="#888888")
+                    text_color=dt["text_muted"])
                 def _retry_worker(att=attempt):
                     import time
                     time.sleep(2.0)
@@ -662,7 +663,7 @@ class BOMToolApp(ctk.CTk):
                 # Sau 3 lần thất bại → hiện nút cho user
                 self._startup_status_lbl.configure(
                     text="❌  Không kết nối được DB",
-                    text_color="#F87171")
+                    text_color=dt["log_err"])
                 bf = self._startup_btn_frame
                 bf.pack(pady=(18, 0))
                 # Hiện chi tiết lỗi để dễ debug
@@ -670,34 +671,35 @@ class BOMToolApp(ctk.CTk):
                 ctk.CTkLabel(bf,
                     text=err_short,
                     font=ctk.CTkFont("Segoe UI", 10),
-                    text_color="#888888",
+                    text_color=dt["text_muted"],
                     wraplength=420,
                     justify="left").pack(pady=(0, 8))
                 ctk.CTkLabel(bf,
                     text="⚠️  Kiểm tra VPN hoặc cấu hình DB rồi thử lại",
                     font=ctk.CTkFont("Segoe UI", 11),
-                    text_color="#555555").pack(pady=(0, 14))
+                    text_color=dt["text_muted"]).pack(pady=(0, 14))
                 row = ctk.CTkFrame(bf, fg_color="transparent")
                 row.pack()
                 ctk.CTkButton(row, text="🔄  Thử lại",
                     command=self._startup_retry,
-                    fg_color=("#3B82F6", "#007ACC"),
-                    hover_color=("#2563EB", "#005F99"),
+                    fg_color=dt["btn_primary"],
+                    hover_color=dt["btn_primary_hover"],
                     width=120, height=36, corner_radius=8).pack(side="left", padx=8)
                 ctk.CTkButton(row, text="Bỏ qua →",
                     command=self._dismiss_startup_overlay,
                     fg_color="transparent", border_width=1,
-                    border_color="#444444", text_color="#888888",
-                    hover_color="#2A2A2A",
+                    border_color=dt["border"], text_color=dt["text_muted"],
+                    hover_color=dt["border"],
                     width=100, height=36, corner_radius=8).pack(side="left", padx=8)
 
     def _startup_retry(self):
         """Xóa nút, reset status, thử kết nối lại."""
+        dt = THEMES[ctk.get_appearance_mode()]
         for w in self._startup_btn_frame.winfo_children():
             w.destroy()
         self._startup_btn_frame.pack_forget()
         self._startup_status_lbl.configure(
-            text="⏳  Đang thử lại...", text_color="#888888")
+            text="⏳  Đang thử lại...", text_color=dt["text_muted"])
         threading.Thread(target=self._startup_check_worker, daemon=True).start()
 
     def _dismiss_startup_overlay(self):
@@ -818,6 +820,7 @@ class BOMToolApp(ctk.CTk):
 
     def _build_tab_import(self):
         tab = self.nb.tab(TAB_IMPORT)
+        dt = THEMES[ctk.get_appearance_mode()]
 
         # ── Action bar — Card phẳng nhóm toàn bộ công cụ ───────────────────────
         bar = ctk.CTkFrame(tab, fg_color=("gray88", "#252526"),
@@ -894,36 +897,36 @@ class BOMToolApp(ctk.CTk):
                         " — khách hàng cần deploy SP trước)")
 
         # Kẻ ngang phân cách toolbar → bảng
-        tk.Frame(tab, bg="#333333", height=1).pack(fill=tk.X)
+        tk.Frame(tab, bg=dt["border"], height=1).pack(fill=tk.X)
 
         # ── Body: sheet list (trái) | treeview (phải) ────────────────────────
-        body = tk.Frame(tab, bg="#1E1E1E")
+        body = tk.Frame(tab, bg=dt["bg_main"])
         body.pack(fill=tk.BOTH, expand=True, pady=(10, 0))
 
         # Sheet list
-        sb_frame = tk.Frame(body, bg="#161616", width=170)
+        sb_frame = tk.Frame(body, bg=dt["bg_deep"], width=170)
         sb_frame.pack(side=tk.LEFT, fill=tk.Y)
         sb_frame.pack_propagate(False)
 
         tk.Label(sb_frame, text="BẢNG DỮ LIỆU",
-            bg="#161616", fg=C["muted"],
+            bg=dt["bg_deep"], fg=C["muted"],
             font=("Segoe UI", 9, "bold")).pack(
             anchor="w", padx=12, pady=(10, 4))
 
-        lb_wrap = tk.Frame(sb_frame, bg="#161616")
+        lb_wrap = tk.Frame(sb_frame, bg=dt["bg_deep"])
         lb_wrap.pack(fill=tk.BOTH, expand=True, padx=6, pady=(0, 6))
         self.listbox = tk.Listbox(lb_wrap,
-            bg="#161616", fg="#CCCCCC",
-            selectbackground="#37373D", selectforeground="#CCCCCC",
+            bg=dt["bg_deep"], fg=dt["tv_text"],
+            selectbackground=dt["tv_sel"], selectforeground=dt["tv_text"],
             font=("Segoe UI", 11),
             relief=tk.FLAT, bd=0, highlightthickness=1,
-            highlightcolor="#007ACC", highlightbackground="#2A2A2A",
+            highlightcolor=dt["accent"], highlightbackground=dt["border"],
             activestyle="none")
         self.listbox.pack(fill=tk.BOTH, expand=True)
         self.listbox.bind("<<ListboxSelect>>", self._on_select)
 
         # Separator
-        tk.Frame(body, bg="#2A2A2A", width=1).pack(side=tk.LEFT, fill=tk.Y)
+        tk.Frame(body, bg=dt["border"], width=1).pack(side=tk.LEFT, fill=tk.Y)
 
         # Content phải — card với nền panel và viền mảnh (fix horizontal scrollbar)
         right = ctk.CTkFrame(body, fg_color=("#FFFFFF", C["panel"]),
@@ -943,32 +946,35 @@ class BOMToolApp(ctk.CTk):
         self.lbl_table.grid(row=0, column=0, sticky="ew", pady=(0, 2))
 
         # ── Warning panel (thay thế lbl_errors) ─────────────────────────────
-        self._warn_outer = tk.Frame(right, bg="#1E1E1E")
+        self._warn_outer = tk.Frame(right, bg=dt["bg_main"])
         # Đặt vào grid row=1, ẩn ngay bằng grid_remove() (giữ cấu hình grid)
         self._warn_outer.grid(row=1, column=0, sticky="ew")
         self._warn_outer.grid_remove()   # ẩn khi chưa có lỗi
 
         # header: badge + text tóm tắt + toggle
-        _wh = tk.Frame(self._warn_outer, bg="#251515", pady=2)
+        _wh = tk.Frame(self._warn_outer, bg=dt["danger_hdr_bg"], pady=2)
         _wh.pack(fill=tk.X)
 
-        self._warn_badge = tk.Label(_wh, text="", bg="#7B1A1A", fg="#FFCCCC",
+        self._warn_badge = tk.Label(_wh, text="", bg=dt["danger_badge_bg"],
+            fg=dt["danger_badge_fg"],
             font=("Segoe UI", 10, "bold"), padx=8, pady=0, cursor="hand2")
         self._warn_badge.pack(side=tk.LEFT, padx=(4, 6))
 
-        self._warn_hdr_lbl = tk.Label(_wh, text="", bg="#251515", fg="#CC8888",
+        self._warn_hdr_lbl = tk.Label(_wh, text="", bg=dt["danger_hdr_bg"],
+            fg=dt["danger_text"],
             font=("Segoe UI", 10), anchor="w")
         self._warn_hdr_lbl.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
         self._warn_expanded = True
-        self._warn_toggle = tk.Label(_wh, text="▾", bg="#251515", fg="#666666",
+        self._warn_toggle = tk.Label(_wh, text="▾", bg=dt["danger_hdr_bg"],
+            fg=dt["text_muted"],
             font=("Segoe UI", 11), cursor="hand2", padx=6)
         self._warn_toggle.pack(side=tk.RIGHT)
         self._warn_toggle.bind("<Button-1>", lambda e: self._toggle_warn_panel())
         self._warn_badge.bind("<Button-1>",  lambda e: self._toggle_warn_panel())
 
         # list area (collapsible)
-        self._warn_list_outer = tk.Frame(self._warn_outer, bg="#1A1212")
+        self._warn_list_outer = tk.Frame(self._warn_outer, bg=dt["danger_list_bg"])
         self._warn_list_outer.pack(fill=tk.X)
 
         self._warn_err_tree = ttk.Treeview(
@@ -993,14 +999,12 @@ class BOMToolApp(ctk.CTk):
         self._warn_iid_to_tree_iid = {}
 
         # Empty state overlay
-        self._tf_outer = tk.Frame(right, bg="#1E1E1E")
+        self._tf_outer = tk.Frame(right, bg=dt["bg_main"])
         self._tf_outer.grid(row=2, column=0, sticky="nsew", pady=(4, 0))
 
-        # Nền #000000 — KHÔNG dùng #1E1E1E (màu nền chuẩn của app) vì khung
-        # này nằm đè lên canvas tksheet (SheetTable theme="dark" có
-        # table_bg=#000000, đen tuyền chứ không phải #1E1E1E) — lệch màu sẽ
-        # hiện thành 1 khung xám nổi bật giữa nền đen, nhìn rất lạc quẻ.
-        _EMPTY_BG = "#000000"
+        # Match màu nền sheet_table_bg: SheetTable giờ dùng dt["sheet_table_bg"]
+        # (không còn hardcode #000000) nên overlay cũng phải đồng bộ theo theme.
+        _EMPTY_BG = dt["sheet_table_bg"]
         # fill toàn bộ _tf_outer để che hoàn toàn tksheet bên dưới
         self._empty_frame = tk.Frame(self._tf_outer, bg=_EMPTY_BG)
         self._empty_frame.place(x=0, y=0, relwidth=1, relheight=1)
@@ -1044,7 +1048,7 @@ class BOMToolApp(ctk.CTk):
         self.tree.tag_configure("sql_names",
             background=C["field_row_bg"], foreground=C["field_row_fg"],
             font=("Segoe UI", 12, "italic"))
-        self.tree.tag_configure("oddrow",  background="#1E1E1E")
+        self.tree.tag_configure("oddrow",  background=dt["bg_main"])
         self.tree.tag_configure("evenrow", background="#2A2D2E")
         self.tree.tag_configure("err_row",  background=C["badge_err_bg"])
         self.tree.tag_configure("warn_row", background=C["badge_warn_bg"])
@@ -1069,7 +1073,7 @@ class BOMToolApp(ctk.CTk):
             tip = tk.Toplevel(self)
             tip.wm_overrideredirect(True)
             tip.wm_geometry(f"+{event.x_root+16}+{event.y_root+12}")
-            tk.Label(tip, text=text, bg="#252526", fg="#CCCCCC",
+            tk.Label(tip, text=text, bg=dt["bg_card"], fg=dt["tv_text"],
                      font=("Segoe UI", 12), relief="solid", bd=1,
                      padx=8, pady=4).pack()
             self._tree_tip = tip
@@ -1094,6 +1098,7 @@ class BOMToolApp(ctk.CTk):
           - Ctrl+A            → select all
           - Right-click       → context menu
         """
+        dt = THEMES[ctk.get_appearance_mode()]
         if not isinstance(tree, ttk.Treeview):
             return   # SheetTable (tksheet) đã có copy tích hợp
         _tip_job  = [None]   # after() job id
@@ -1204,7 +1209,7 @@ class BOMToolApp(ctk.CTk):
         # ── Right-click menu ─────────────────────────────────────────────────
         def _show_menu(event):
             menu = tk.Menu(tree, tearoff=0,
-                           bg="#2D2D30", fg="#CCCCCC",
+                           bg=dt["bg_panel"], fg=dt["tv_text"],
                            activebackground="#094771", activeforeground="white",
                            relief="flat", bd=0)
             menu.add_command(label="Copy ô đang click        (click trái)", command=lambda: None)
@@ -1241,6 +1246,7 @@ class BOMToolApp(ctk.CTk):
         dlg.focus_force()
 
     def _build_mapping_content(self, parent):
+        dt = THEMES[ctk.get_appearance_mode()]
         bar = ctk.CTkFrame(parent, corner_radius=0, height=48)
         bar.pack(fill=tk.X)
         bar.pack_propagate(False)
@@ -1270,7 +1276,7 @@ class BOMToolApp(ctk.CTk):
                       "Nguồn DL","Bảng Master","Điều kiện","Kiểu Lookup","Ghi chú"]
         MAP_WIDTHS = [170,220,90,80,90,130,220,130,280]
 
-        tf = tk.Frame(parent, bg="#1E1E1E")
+        tf = tk.Frame(parent, bg=dt["bg_main"])
         tf.pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
         if _HAS_TKSHEET:
             self.map_tree = SheetTable(tf, columns=MAP_COLS)
@@ -1291,13 +1297,13 @@ class BOMToolApp(ctk.CTk):
             self.map_tree.heading(col, text=col, anchor=_al)
             self.map_tree.column(col, width=w, anchor=_al, stretch=(col=="Ghi chú"))
         self.map_tree.tag_configure("sys",  foreground="gray")
-        self.map_tree.tag_configure("miss", foreground="#D7BA7D")
+        self.map_tree.tag_configure("miss", foreground=dt["log_warn"])
         self.map_tree.tag_configure("conf", foreground="#F97316")
-        self.map_tree.tag_configure("ok",   foreground="#CCCCCC")
+        self.map_tree.tag_configure("ok",   foreground=dt["tv_text"])
         self._bind_copy(self.map_tree, "Mapping")
 
         self._map_info_lbl = tk.Label(parent, text="",
-            bg="#1E1E1E", fg="gray", font=("Segoe UI", 12), anchor="w")
+            bg=dt["bg_main"], fg="gray", font=("Segoe UI", 12), anchor="w")
         self._map_info_lbl.pack(fill=tk.X, padx=10, pady=(0,4))
         self._refresh_mapping_tab()
 
@@ -1379,6 +1385,7 @@ class BOMToolApp(ctk.CTk):
 
     def _setup_catalog_view_tab(self, tab):
         """Sub-tab 1: Treeview xem danh mục + Export."""
+        dt = THEMES[ctk.get_appearance_mode()]
         bar = ctk.CTkFrame(tab, fg_color=("gray88","gray16"), height=48, corner_radius=0)
         bar.pack(fill=tk.X)
         bar.pack_propagate(False)
@@ -1466,14 +1473,14 @@ class BOMToolApp(ctk.CTk):
         self.catalog_tree.column("S.Mặt Phụ",      width=75,  anchor="center", stretch=False)
         self.catalog_tree.column("Lớp Phủ Phụ",    width=120, anchor="w",      stretch=False)
         self.catalog_tree.column("Độ Dày",         width=65,  anchor="center", stretch=False)
-        self.catalog_tree.tag_configure("group",          foreground="#4EC9B0", font=("Segoe UI", 10, "bold"))
-        self.catalog_tree.tag_configure("group_inactive", foreground="#5A7070", font=("Segoe UI", 10, "italic"))
-        self.catalog_tree.tag_configure("leaf",           foreground="#CCCCCC")
-        self.catalog_tree.tag_configure("orphan_group",   foreground="#7A7A7A", font=("Segoe UI", 10, "italic"))
+        self.catalog_tree.tag_configure("group",          foreground=dt["log_ok"],       font=("Segoe UI", 10, "bold"))
+        self.catalog_tree.tag_configure("group_inactive", foreground=dt["cat_inactive"], font=("Segoe UI", 10, "italic"))
+        self.catalog_tree.tag_configure("leaf",           foreground=dt["cat_leaf"])
+        self.catalog_tree.tag_configure("orphan_group",   foreground=dt["cat_orphan"],   font=("Segoe UI", 10, "italic"))
         self.catalog_tree.tag_configure("sql_names",
             background=C["field_row_bg"], foreground=C["field_row_fg"],
             font=("Segoe UI", 10, "italic"))
-        self.catalog_tree.tag_configure("oddrow",  background="#1E1E1E")
+        self.catalog_tree.tag_configure("oddrow",  background=dt["bg_main"])
         self.catalog_tree.tag_configure("evenrow", background="#2A2D2E")
         self.catalog_tree.grid(row=0, column=0, sticky="nsew")
         vsb.grid(row=0, column=1, sticky="ns")
@@ -3507,6 +3514,7 @@ class BOMToolApp(ctk.CTk):
 
     def _catalog_show_sql_preview(self, results: list):
         """Hiển thị SQL INSERT preview (dry-run) trong dialog có scroll + Copy All."""
+        dt = THEMES[ctk.get_appearance_mode()]
         import tkinter as _tk
 
         dlg = ctk.CTkToplevel(self)
@@ -3534,7 +3542,7 @@ class BOMToolApp(ctk.CTk):
 
         CButton(hdr, text="📋 Copy All", command=_copy_all,
                 font=ctk.CTkFont("Segoe UI", 10),
-                fg_color="#1E3A5F", hover_color="#2563EB",
+                fg_color="#1E3A5F", hover_color=dt["btn_primary"],
                 text_color="#DBEAFE", height=28, corner_radius=5,
                 width=110).pack(side=_tk.RIGHT, padx=12, pady=8)
 
@@ -3568,7 +3576,7 @@ class BOMToolApp(ctk.CTk):
         txt.tag_configure("val",     foreground="#A5D6FF")
         txt.tag_configure("col",     foreground="#D2A8FF")
         txt.tag_configure("skip",    foreground="#FCD34D")
-        txt.tag_configure("err",     foreground="#F87171")
+        txt.tag_configure("err",     foreground=dt["log_err"])
 
         def _insert_sql_line(line):
             ls = line.strip()
@@ -3618,6 +3626,7 @@ class BOMToolApp(ctk.CTk):
 
     def _catalog_show_import_results(self, results, n_ok, n_skip, n_err):
         """Hiển thị dialog cuộn kết quả import từng dòng."""
+        dt = THEMES[ctk.get_appearance_mode()]
         dlg = ctk.CTkToplevel(self)
         dlg.title("Kết quả Import Template")
         dlg.resizable(True, True)
@@ -3646,7 +3655,7 @@ class BOMToolApp(ctk.CTk):
         import tkinter as _tk
         txt = _tk.Text(txt_frame, wrap="none",
                        font=("Consolas", 10),
-                       bg="#1E1E1E", fg="#D4D4D4",
+                       bg=dt["bg_main"], fg="#D4D4D4",
                        relief="flat", bd=0,
                        selectbackground="#264F78")
         sb_y = _tk.Scrollbar(txt_frame, orient="vertical",   command=txt.yview)
@@ -3658,7 +3667,7 @@ class BOMToolApp(ctk.CTk):
 
         txt.tag_configure("ok",   foreground="#4ADE80")
         txt.tag_configure("skip", foreground="#FCD34D")
-        txt.tag_configure("err",  foreground="#F87171")
+        txt.tag_configure("err",  foreground=dt["log_err"])
         txt.tag_configure("hdr",  foreground="#94A3B8")
 
         txt.insert("end", f"{'Dòng':<6}  {'Code':<18}  Trạng thái\n", "hdr")
@@ -3722,6 +3731,7 @@ class BOMToolApp(ctk.CTk):
 
     def _build_tab_thdm(self):
         tab = self.nb.tab(TAB_THDM)
+        dt = THEMES[ctk.get_appearance_mode()]
 
         # ── Action bar ngang ─────────────────────────────────────────────────
         bar = ctk.CTkFrame(tab, fg_color=("gray88","gray16"), height=56,
@@ -3819,13 +3829,13 @@ class BOMToolApp(ctk.CTk):
 
         # ── Main area: PanedWindow kéo-thả điều chỉnh tỉ lệ trái/phải ──────
         main = tk.PanedWindow(tab, orient=tk.HORIZONTAL,
-                              bg="#2A2A2A", bd=0,
+                              bg=dt["border"], bd=0,
                               sashwidth=5, sashrelief="flat",
                               opaqueresize=True)
         main.pack(fill=tk.BOTH, expand=True)
 
         # ── LEFT: BOM list ────────────────────────────────────────────────────
-        lf = tk.Frame(main, bg="#161616")
+        lf = tk.Frame(main, bg=dt["bg_deep"])
         lf.rowconfigure(1, weight=1)
         lf.columnconfigure(0, weight=1)
         main.add(lf, minsize=150, stretch="always")
@@ -3843,18 +3853,19 @@ class BOMToolApp(ctk.CTk):
             fg_color="transparent").pack(fill=tk.X, padx=6, pady=1)
 
         # BOM treeview
-        btf = tk.Frame(lf, bg="#161616")
+        btf = tk.Frame(lf, bg=dt["bg_deep"])
         btf.grid(row=1, column=0, sticky="nsew")
         btf.rowconfigure(0, weight=1)
         btf.columnconfigure(0, weight=1)
 
         # ── tksheet (Excel-like grid) ─────────────────────────────────────────
         if _HAS_TKSHEET:
+            _sheet_theme = "light" if ctk.get_appearance_mode() == "Light" else "dark"
             self.thdm_bom_sheet = tksheet.Sheet(
                 btf,
                 headers=["✓", "Mục số", "Mã BOM", "Tên SP", "Version"],
                 data=[],
-                theme="dark",
+                theme=_sheet_theme,
                 show_row_index=False,
                 show_top_left=False,
                 row_height=30,
@@ -3870,19 +3881,19 @@ class BOMToolApp(ctk.CTk):
             )
             try:
                 self.thdm_bom_sheet.set_options(
-                    table_bg="#1E1E1E",
-                    table_fg="#E8E8E8",
-                    header_bg="#1B2A4A",
-                    header_fg="#FFFFFF",
-                    index_bg="#252526",
-                    index_fg="#E8E8E8",
-                    top_left_bg="#1B2A4A",
+                    table_bg=dt["sheet_table_bg"],
+                    table_fg=dt["sheet_table_fg"],
+                    header_bg=dt["sheet_header_bg"],
+                    header_fg=dt["sheet_header_fg"],
+                    index_bg=dt["sheet_index_bg"],
+                    index_fg=dt["sheet_index_fg"],
+                    top_left_bg=dt["sheet_header_bg"],
                     show_horizontal_grid=True,
                     show_vertical_grid=True,
-                    table_grid_fg="#AAAAAA",
-                    header_grid_fg="#AAAAAA",
-                    index_grid_fg="#AAAAAA",
-                    outline_color="#AAAAAA",
+                    table_grid_fg=dt["sheet_grid"],
+                    header_grid_fg=dt["sheet_grid"],
+                    index_grid_fg=dt["sheet_grid"],
+                    outline_color=dt["sheet_grid"],
                 )
             except Exception:
                 pass
@@ -3940,8 +3951,8 @@ class BOMToolApp(ctk.CTk):
             ]:
                 self.thdm_bom_tree.heading(_bc, text=_bc, anchor=_ba)
                 self.thdm_bom_tree.column(_bc, width=_bw, minwidth=50, anchor=_ba, stretch=_bs)
-            self.thdm_bom_tree.tag_configure("checked",   foreground="#4EC9B0")
-            self.thdm_bom_tree.tag_configure("unchecked", foreground="#AAAAAA")
+            self.thdm_bom_tree.tag_configure("checked",   foreground=dt["log_ok"])
+            self.thdm_bom_tree.tag_configure("unchecked", foreground=dt["text_muted"])
             self.thdm_bom_tree.grid(row=0, column=0, sticky="nsew")
             vsb_b.grid(row=0, column=1, sticky="ns")
             self.thdm_bom_tree.bind("<ButtonRelease-1>", self._thdm_on_bom_click)
@@ -3987,7 +3998,7 @@ class BOMToolApp(ctk.CTk):
         self.btn_thdm_aggregate.pack(side=tk.RIGHT, padx=6, pady=5)
 
         # ── RIGHT: File picker + Preview ─────────────────────────────────────
-        rf = tk.Frame(main, bg="#1E1E1E")
+        rf = tk.Frame(main, bg=dt["bg_main"])
         main.add(rf, minsize=200, stretch="always")
         self.after(80, lambda: main.sash_place(0, 350, 0))
 
@@ -4016,13 +4027,13 @@ class BOMToolApp(ctk.CTk):
 
         # ── Content area — switches between pre-preview and result ────────────
         # (pack() được gọi SAU khi ab đã pack(BOTTOM) để không bị che khuất)
-        ca = tk.Frame(rf, bg="#1E1E1E")
+        ca = tk.Frame(rf, bg=dt["bg_main"])
         ca.rowconfigure(0, weight=1)
         ca.columnconfigure(0, weight=1)
         self._thdm_content_area = ca
 
         # ── PRE-PREVIEW frame (hiện sau khi chọn file, trước khi Tổng hợp) ──
-        pref = tk.Frame(ca, bg="#1E1E1E")
+        pref = tk.Frame(ca, bg=dt["bg_main"])
         pref.grid(row=0, column=0, sticky="nsew")
         pref.rowconfigure(1, weight=1)
         pref.columnconfigure(0, weight=1)
@@ -4030,14 +4041,14 @@ class BOMToolApp(ctk.CTk):
 
         self._lbl_thdm_pre_status = tk.Label(pref,
             text="⏳  Đang đọc file Excel...",
-            font=("Segoe UI", 11), fg="#888888", bg="#1E1E1E", anchor="w")
+            font=("Segoe UI", 11), fg=dt["text_muted"], bg=dt["bg_main"], anchor="w")
         self._lbl_thdm_pre_status.grid(row=0, column=0, sticky="ew", padx=12, pady=(8, 4))
 
         self._thdm_pre_nb = ttk.Notebook(pref)
         self._thdm_pre_nb.grid(row=1, column=0, sticky="nsew", padx=4, pady=(0, 4))
 
         # Tab 1 — Raw Excel
-        raw_tab = tk.Frame(self._thdm_pre_nb, bg="#2D2D2D")
+        raw_tab = tk.Frame(self._thdm_pre_nb, bg=dt["bg_panel"])
         self._thdm_pre_nb.add(raw_tab, text="  📄 Raw Excel  ")
         raw_tab.rowconfigure(0, weight=1)
         raw_tab.columnconfigure(0, weight=1)
@@ -4061,7 +4072,7 @@ class BOMToolApp(ctk.CTk):
         pref.grid_remove()   # ẩn cho đến khi file được chọn
 
         # ── RESULT frame (hiển thị sau khi Tổng hợp) ─────────────────────────
-        ptf = tk.Frame(ca, bg="#2D2D2D", bd=1, relief="flat")
+        ptf = tk.Frame(ca, bg=dt["bg_panel"], bd=1, relief="flat")
         ptf.grid(row=0, column=0, sticky="nsew")
         ptf.rowconfigure(0, weight=0)   # filter bar — không mở rộng
         ptf.rowconfigure(1, weight=1)   # notebook chiếm phần còn lại
@@ -4069,7 +4080,7 @@ class BOMToolApp(ctk.CTk):
         self._thdm_result_frame = ptf
 
         # ── Filter bar ─────────────────────────────────────────────────────────
-        _fb = tk.Frame(ptf, bg="#1B2A4A")
+        _fb = tk.Frame(ptf, bg=dt["tv_heading_bg"])
         _fb.grid(row=0, column=0, sticky="ew")
         self._thdm_filter_seg = ctk.CTkSegmentedButton(
             _fb,
@@ -4086,7 +4097,7 @@ class BOMToolApp(ctk.CTk):
         self._thdm_result_nb.grid(row=1, column=0, sticky="nsew")
 
         def _mk_result_grid(title, columns):
-            tabf = tk.Frame(self._thdm_result_nb, bg="#2D2D2D")
+            tabf = tk.Frame(self._thdm_result_nb, bg=dt["bg_panel"])
             self._thdm_result_nb.add(tabf, text=title)
             tabf.rowconfigure(0, weight=1)
             tabf.columnconfigure(0, weight=1)
@@ -4103,11 +4114,11 @@ class BOMToolApp(ctk.CTk):
                 tr.grid(row=0, column=0, sticky="nsew")
                 _v.grid(row=0, column=1, sticky="ns")
                 _h.grid(row=1, column=0, sticky="ew")
-            tr.tag_configure("row_normal", foreground=C["text"])
-            tr.tag_configure("row_alt",    foreground=C["muted"])
-            tr.tag_configure("err_row",  background=C["badge_err_bg"],  foreground=C["badge_err_fg"])
-            tr.tag_configure("warn_row", background=C["badge_warn_bg"], foreground=C["badge_warn_fg"])
-            tr.tag_configure("sql_names", background=C["field_row_bg"], foreground=C["field_row_fg"])
+            tr.tag_configure("row_normal", foreground=dt["text_main"])
+            tr.tag_configure("row_alt",    foreground=dt["text_muted"])
+            tr.tag_configure("err_row",  background=dt["badge_err_bg"],  foreground=dt["badge_err_fg"])
+            tr.tag_configure("warn_row", background=dt["badge_warn_bg"], foreground=dt["badge_warn_fg"])
+            tr.tag_configure("sql_names", background=dt["field_row_bg"], foreground=dt["field_row_fg"])
             return tr
 
         # Tab 0 — Header (THDM_HEADER, resolve display-only)
@@ -4234,16 +4245,16 @@ class BOMToolApp(ctk.CTk):
 
         # ── Empty state (hiện khi chưa chọn gì, giống tab Import BOM) ────────
         self._thdm_result_frame.grid_remove()
-        _ef = tk.Frame(ca, bg="#1E1E1E")
+        _ef = tk.Frame(ca, bg=dt["bg_main"])
         _ef.place(relx=0.5, rely=0.45, anchor="center")
-        tk.Label(_ef, text="📋", bg="#1E1E1E", fg="#3E3E42",
+        tk.Label(_ef, text="📋", bg=dt["bg_main"], fg="#3E3E42",
                  font=("Segoe UI", 48)).pack()
         tk.Label(_ef, text="①  Tải dữ liệu và chọn Dự án / Đơn hàng / Nhân viên / Đợt",
-                 bg="#1E1E1E", fg="#555555", font=("Segoe UI", 13)).pack(pady=(4, 0))
+                 bg=dt["bg_main"], fg="#555555", font=("Segoe UI", 13)).pack(pady=(4, 0))
         tk.Label(_ef, text="Tick chọn BOM ở danh sách bên trái  →  ②  Chọn file Excel THDM",
-                 bg="#1E1E1E", fg="#3E3E42", font=("Segoe UI", 11)).pack(pady=(2, 0))
+                 bg=dt["bg_main"], fg="#3E3E42", font=("Segoe UI", 11)).pack(pady=(2, 0))
         tk.Label(_ef, text="③ Tổng hợp  →  ④ Kiểm tra  →  ⑤ Tạo THDM",
-                 bg="#1E1E1E", fg="#3E3E42", font=("Segoe UI", 11)).pack(pady=(2, 0))
+                 bg=dt["bg_main"], fg="#3E3E42", font=("Segoe UI", 11)).pack(pady=(2, 0))
         self._thdm_empty_frame = _ef
 
         # Internal state
@@ -4565,9 +4576,10 @@ class BOMToolApp(ctk.CTk):
             self.after(0, lambda err=e: self._thdm_load_products_done([], str(err)))
 
     def _thdm_load_products_done(self, rows, error):
+        dt = THEMES[ctk.get_appearance_mode()]
         self.btn_thdm_load.configure(state="normal", text="🔄  ① Tải dữ liệu")
         if error:
-            self.lbl_thdm_status.config(text=f"❌  {error}", fg="#F87171")
+            self.lbl_thdm_status.config(text=f"❌  {error}", fg=dt["log_err"])
             return
         # Hiển thị "Code  |  Name  [Id]", map display → Id
         def _prod_disp(r):
@@ -4638,8 +4650,9 @@ class BOMToolApp(ctk.CTk):
             self.after(0, lambda err=e: self._thdm_load_orders_done([], str(err)))
 
     def _thdm_load_orders_done(self, rows, error):
+        dt = THEMES[ctk.get_appearance_mode()]
         if error:
-            self.lbl_thdm_status.config(text=f"❌  {error}", fg="#F87171")
+            self.lbl_thdm_status.config(text=f"❌  {error}", fg=dt["log_err"])
             return
         # Hiển thị "DocNo2  |  DocDate  |  Description"
         # r = (BizDocId, DocNo2, DocDate, Descr) — BizDocId string dạng "11034510FO"
@@ -4716,12 +4729,13 @@ class BOMToolApp(ctk.CTk):
             self.after(0, lambda err=e: self._thdm_period_by_order_done([], str(err)))
 
     def _thdm_period_by_order_done(self, rows, error):
+        dt = THEMES[ctk.get_appearance_mode()]
         if error:
             self.cmb_thdm_period.configure(
                 state="normal", values=["⚠  Lỗi tải đợt"])
             self.cmb_thdm_period.set("⚠  Lỗi tải đợt")
             # Hiện lỗi thật ra status để debug
-            self.lbl_thdm_status.config(text=f"❌  Đợt: {error}", fg="#F87171")
+            self.lbl_thdm_status.config(text=f"❌  Đợt: {error}", fg=dt["log_err"])
             return
         if not rows:
             self.cmb_thdm_period.configure(values=["— Không có đợt —"])
@@ -4773,8 +4787,9 @@ class BOMToolApp(ctk.CTk):
             self.after(0, lambda err=e: self._thdm_builtin_orders_done(set(), str(err)))
 
     def _thdm_builtin_orders_done(self, valid_orders, error):
+        dt = THEMES[ctk.get_appearance_mode()]
         if error:
-            self.lbl_thdm_status.config(text=f"❌  {error}", fg="#F87171")
+            self.lbl_thdm_status.config(text=f"❌  {error}", fg=dt["log_err"])
             return
         self._thdm_valid_builtin_orders = valid_orders
         self._thdm_filter_bom()
@@ -4886,6 +4901,7 @@ class BOMToolApp(ctk.CTk):
                        self._thdm_pre_preview_done([], [], None, [], str(e)))
 
     def _thdm_pre_preview_done(self, raw_rows, raw_base, hidx, parsed_rows, error):
+        dt = THEMES[ctk.get_appearance_mode()]
         if error:
             self._lbl_thdm_pre_status.config(text=f"❌  {error}")
             self._thdm_pre_nb.grid()   # hiện notebook dù lỗi (tabs rỗng)
@@ -4946,8 +4962,8 @@ class BOMToolApp(ctk.CTk):
             raw_tree.heading(nm, text=nm, anchor=_ra)
             raw_tree.column(nm, width=90, anchor=_ra, minwidth=50, stretch=False)
         raw_tree.tag_configure("row_header", foreground="#60A5FA", background="#1E3A5F")
-        raw_tree.tag_configure("row_normal", foreground="#CCCCCC")
-        raw_tree.tag_configure("row_alt",    foreground="#888888")
+        raw_tree.tag_configure("row_normal", foreground=dt["tv_text"])
+        raw_tree.tag_configure("row_alt",    foreground=dt["text_muted"])
         raw_tree.tag_configure("row_blank",  foreground="#444444")
 
         for i, row in enumerate(display_rows[:MAX_RAW]):
@@ -5026,8 +5042,9 @@ class BOMToolApp(ctk.CTk):
             self.after(0, lambda err=e: self._thdm_load_bom_list_done([], str(err)))
 
     def _thdm_load_bom_list_done(self, rows, error):
+        dt = THEMES[ctk.get_appearance_mode()]
         if error:
-            self.lbl_thdm_status.config(text=f"❌  {error}", fg="#F87171")
+            self.lbl_thdm_status.config(text=f"❌  {error}", fg=dt["log_err"])
             return
         self._thdm_all_bom_rows = rows
         self._thdm_checked_ids  = set()
@@ -6186,6 +6203,7 @@ class BOMToolApp(ctk.CTk):
 
     def _thdm_view_sql(self):
         """Hiện SQL INSERT sẽ thực hiện khi nhấn INSERT vào DB."""
+        dt = THEMES[ctk.get_appearance_mode()]
         if not self._thdm_preview_data:
             return
         from datetime import datetime as _dt
@@ -6365,7 +6383,7 @@ class BOMToolApp(ctk.CTk):
         dlg.title("SQL preview — THDM")
         dlg.geometry("900x580")
         dlg.grab_set()
-        txt = tk.Text(dlg, bg="#1E1E1E", fg="#D4D4D4",
+        txt = tk.Text(dlg, bg=dt["bg_main"], fg="#D4D4D4",
             font=("Consolas", 10), wrap="none",
             insertbackground="#D4D4D4")
         txt.pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
@@ -6774,6 +6792,7 @@ class BOMToolApp(ctk.CTk):
 
     # ─ Tab 4: Lịch sử Log ──────────────────────────────────────────────────────────────────────
     def _build_log_panel(self):
+        dt = THEMES[ctk.get_appearance_mode()]
         self._log_expanded = False
         self.log_panel = ctk.CTkFrame(self, corner_radius=0, height=40)
         self.log_panel.grid(row=2, column=0, sticky="ew")
@@ -6825,7 +6844,7 @@ class BOMToolApp(ctk.CTk):
             width=90, height=24, corner_radius=6)
         self.btn_log_toggle.grid(row=0, column=4)
 
-        self.log_content = tk.Frame(self.log_panel, bg="#1E1E1E", height=200)
+        self.log_content = tk.Frame(self.log_panel, bg=dt["bg_main"], height=200)
 
         LOG_COLS = ["Thời gian","Tên file","Sheet","Tổng dòng","Trạng thái","Chi tiết"]
         if _HAS_TKSHEET:
@@ -6844,9 +6863,9 @@ class BOMToolApp(ctk.CTk):
             self.log_tree.column(col, width=w, anchor=_la, stretch=(col=="Chi tiết"))
         self.log_content.rowconfigure(0, weight=1)
         self.log_content.columnconfigure(0, weight=1)
-        self.log_tree.tag_configure("ok",   foreground="#4EC9B0")
-        self.log_tree.tag_configure("warn", foreground="#D7BA7D")
-        self.log_tree.tag_configure("err",  foreground="#F48771")
+        self.log_tree.tag_configure("ok",   foreground=dt["log_ok"])
+        self.log_tree.tag_configure("warn", foreground=dt["log_warn"])
+        self.log_tree.tag_configure("err",  foreground=dt["log_err"])
         self._bind_copy(self.log_tree, "Log")
 
     def _toggle_log(self):
@@ -7788,12 +7807,14 @@ class BOMToolApp(ctk.CTk):
         tree.bind("<Double-Button-1>", lambda e: on_choose())
         tree.bind("<Return>", lambda e: on_choose())
 
-        bf = tk.Frame(dlg, bg=_dt["bg_main"])
+        bf = ctk.CTkFrame(dlg, fg_color=_dt["bg_main"])
         bf.pack(pady=6)
-        tk.Button(bf, text="Chọn", width=12, command=on_choose,
-                  bg=C["green"], fg="white", relief=tk.FLAT).pack(side=tk.LEFT, padx=6)
-        tk.Button(bf, text="Bo qua (ItemId0=NULL)", width=22, command=on_skip,
-                  bg=_dt["bg_card"], fg=_dt["text_muted"], relief=tk.FLAT).pack(side=tk.LEFT, padx=6)
+        ctk.CTkButton(bf, text="Chọn", width=100, command=on_choose,
+                      fg_color=C["green"], hover_color="#3D8B40",
+                      text_color="white").pack(side=tk.LEFT, padx=6)
+        ctk.CTkButton(bf, text="Bỏ qua (ItemId=NULL)", width=180, command=on_skip,
+                      fg_color=_dt["bg_card"], hover_color=_dt["border"],
+                      text_color=_dt["text_muted"]).pack(side=tk.LEFT, padx=6)
 
         dlg.wait_window()
         return result[0]

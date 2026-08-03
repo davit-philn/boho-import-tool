@@ -20,12 +20,14 @@ except ImportError:
 
 try:                          # A1: guard — bom_parser chạy được không cần GUI
     import tkinter as tk
+    import customtkinter as _ctk_mod
     _HAS_TK = True
 except ImportError:
     tk = None
+    _ctk_mod = None
     _HAS_TK = False
 
-from services.utils import _norm_vn, _nan_str, guess_col_align
+from services.utils import _norm_vn, _nan_str, guess_col_align, THEMES
 from services.mapping_loader import (
     load_mapping, build_reverse_map, match_col_to_sql,
     build_meta_keys_from_mapping, _load_section_rows,
@@ -553,6 +555,9 @@ def _ask_excel_password(filename):
     Hiện dialog nhỏ hỏi mật khẩu Excel.
     Trả về: password (str) hoặc None nếu người dùng bấm Hủy.
     """
+    mode = _ctk_mod.get_appearance_mode() if _ctk_mod else "Dark"
+    dt = THEMES[mode]
+
     result = [None]
     dialog = tk.Toplevel()
     dialog.title("File được bảo vệ bằng mật khẩu")
@@ -566,24 +571,25 @@ def _ask_excel_password(filename):
     x = (dialog.winfo_screenwidth()  - w) // 2
     y = (dialog.winfo_screenheight() - h) // 2
     dialog.geometry(f"{w}x{h}+{x}+{y}")
-    dialog.configure(bg="#1e1e1e")
+    dialog.configure(bg=dt["bg_main"])
 
     tk.Label(dialog, text="🔒  File Excel có mật khẩu",
              font=("Segoe UI", 11, "bold"),
-             bg="#1e1e1e", fg="#F1F5F9").pack(pady=(16, 2))
+             bg=dt["bg_main"], fg=dt["text_main"]).pack(pady=(16, 2))
     tk.Label(dialog, text=os.path.basename(filename),
-             font=("Segoe UI", 9), bg="#1e1e1e", fg="#94A3B8").pack()
+             font=("Segoe UI", 9), bg=dt["bg_main"], fg=dt["text_muted"]).pack()
     tk.Label(dialog, text="Nhập mật khẩu để mở file:",
-             font=("Segoe UI", 9), bg="#1e1e1e", fg="#CBD5E1").pack(pady=(10, 4))
+             font=("Segoe UI", 9), bg=dt["bg_main"], fg=dt["text_muted"]).pack(pady=(10, 4))
 
     entry = tk.Entry(dialog, show="*", font=("Segoe UI", 10),
-                     bg="#334155", fg="white", insertbackground="white",
+                     bg=dt["dlg_input_bg"], fg=dt["text_main"],
+                     insertbackground=dt["text_main"],
                      relief="flat", width=32)
     entry.pack(ipady=5)
     entry.focus_set()
 
     err_lbl = tk.Label(dialog, text="", font=("Segoe UI", 8),
-                       bg="#1e1e1e", fg="#F87171")
+                       bg=dt["bg_main"], fg=dt["log_err"])
     err_lbl.pack()
 
     def on_ok(event=None):
@@ -597,14 +603,22 @@ def _ask_excel_password(filename):
     def on_cancel():
         dialog.destroy()
 
-    btn_frame = tk.Frame(dialog, bg="#1e1e1e")
+    btn_frame = tk.Frame(dialog, bg=dt["bg_main"])
     btn_frame.pack(pady=(4, 0))
-    tk.Button(btn_frame, text="Hủy", width=10, command=on_cancel,
-              bg="#334155", fg="white", relief="flat",
-              activebackground="#475569", cursor="hand2").pack(side="left", padx=6)
-    tk.Button(btn_frame, text="✓  Xác nhận", width=12, command=on_ok,
-              bg="#2563eb", fg="white", relief="flat",
-              activebackground="#1d4ed8", cursor="hand2").pack(side="left", padx=6)
+    if _ctk_mod:
+        _ctk_mod.CTkButton(btn_frame, text="Hủy", width=80, command=on_cancel,
+                           fg_color=dt["dlg_input_bg"], text_color=dt["text_main"],
+                           hover_color=dt["btn_sec_hover"]).pack(side="left", padx=6)
+        _ctk_mod.CTkButton(btn_frame, text="✓  Xác nhận", width=110, command=on_ok,
+                           fg_color=dt["btn_primary"], text_color="white",
+                           hover_color=dt["btn_primary_hover"]).pack(side="left", padx=6)
+    else:
+        tk.Button(btn_frame, text="Hủy", width=10, command=on_cancel,
+                  bg=dt["dlg_input_bg"], fg=dt["text_main"], relief="flat",
+                  cursor="hand2").pack(side="left", padx=6)
+        tk.Button(btn_frame, text="✓  Xác nhận", width=12, command=on_ok,
+                  bg=dt["btn_primary"], fg="white", relief="flat",
+                  cursor="hand2").pack(side="left", padx=6)
 
     entry.bind("<Return>", on_ok)
     dialog.bind("<Escape>", lambda e: on_cancel())
