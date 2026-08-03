@@ -5596,7 +5596,7 @@ class BOMToolApp(ctk.CTk):
                                for f in self._thdm_val_lk_fails.get((sec, other_idx), [])):
                             same_rows.append(other_idx)
             if same_rows:
-                confirm = messagebox.askyesno(
+                confirm = self._ask_msg(
                     "Áp dụng hàng loạt?",
                     f"Tìm thấy {len(same_rows)} dòng khác có cùng \"{cur_name}\" "
                     f"và cùng lỗi cột {lk_rec.get('ten_excel') or sql_col}.\n"
@@ -6415,10 +6415,9 @@ class BOMToolApp(ctk.CTk):
                 "Vui lòng sửa hết lỗi (bấm ④ Kiểm tra lại) trước khi Tạo THDM.",
                 kind="warning")
             return
-        import tkinter.messagebox as mb
         n    = len(self._thdm_preview_data)
         boms = len(self._thdm_checked_ids)
-        ok   = mb.askyesno("Xác nhận tạo THDM",
+        ok   = self._ask_msg("Xác nhận tạo THDM",
             f"Sẽ tạo 1 phiếu THDM mới với:\n"
             f"  • {boms} BOM được chọn\n"
             f"  • {n:,} dòng vật tư từ Excel\n\n"
@@ -7011,9 +7010,10 @@ class BOMToolApp(ctk.CTk):
                     event2 = threading.Event()
                     _att = attempt + 1
                     def _warn(a=_att):
-                        messagebox.showwarning(
+                        self._show_msg(
                             "Sai mật khẩu",
-                            f"Mật khẩu không đúng (lần {a}/3).\nVui lòng thử lại.")
+                            f"Mật khẩu không đúng (lần {a}/3).\nVui lòng thử lại.",
+                            'warning')
                         event2.set()
                     self.after(0, _warn)
                     event2.wait()
@@ -7832,6 +7832,7 @@ class BOMToolApp(ctk.CTk):
         dlg.transient(self)
         dlg.grab_set()
         dlg.protocol("WM_DELETE_WINDOW", dlg.destroy)
+        dlg.bind("<Escape>", lambda e: dlg.destroy())
 
         # ── Header info ───────────────────────────────────────────────────────
         top = ctk.CTkFrame(dlg, fg_color="transparent")
@@ -9005,10 +9006,13 @@ class BOMToolApp(ctk.CTk):
                      wraplength=320, justify="center").pack(pady=(0, 16), padx=24)
         ctk.CTkButton(dlg, text="OK", width=100,
                       command=dlg.destroy).pack(pady=(0, 20))
+        dlg.bind("<Return>", lambda e: dlg.destroy())
+        dlg.bind("<Escape>", lambda e: dlg.destroy())
         dlg.update_idletasks()
         w, h = 380, dlg.winfo_reqheight() + 20
         sw, sh = dlg.winfo_screenwidth(), dlg.winfo_screenheight()
         dlg.geometry(f"{w}x{h}+{(sw-w)//2}+{(sh-h)//2}")
+        dlg.focus_set()
         dlg.wait_window()
 
     def _show_export_success(self, title, msg, path):
@@ -9041,10 +9045,13 @@ class BOMToolApp(ctk.CTk):
         ctk.CTkButton(btn_frm, text="📂  Mở file", width=110, command=_open).pack(side="left", padx=8)
         ctk.CTkButton(btn_frm, text="Đóng", width=90, fg_color="gray40",
                       hover_color="gray30", command=dlg.destroy).pack(side="left", padx=8)
+        dlg.bind("<Return>", lambda e: dlg.destroy())
+        dlg.bind("<Escape>", lambda e: dlg.destroy())
         dlg.update_idletasks()
         w, h = 400, dlg.winfo_reqheight() + 20
         sw, sh = dlg.winfo_screenwidth(), dlg.winfo_screenheight()
         dlg.geometry(f"{w}x{h}+{(sw-w)//2}+{(sh-h)//2}")
+        dlg.focus_set()
         dlg.wait_window()
 
     def _ask_msg(self, title, msg):
@@ -9075,10 +9082,13 @@ class BOMToolApp(ctk.CTk):
         ctk.CTkButton(btn_frm, text="Có", width=90, command=_yes).pack(side="left", padx=8)
         ctk.CTkButton(btn_frm, text="Không", width=90, fg_color="gray40",
                       hover_color="gray30", command=dlg.destroy).pack(side="left", padx=8)
+        dlg.bind("<Return>", lambda e: _yes())
+        dlg.bind("<Escape>", lambda e: dlg.destroy())
         dlg.update_idletasks()
         w, h = 380, dlg.winfo_reqheight() + 20
         sw, sh = dlg.winfo_screenwidth(), dlg.winfo_screenheight()
         dlg.geometry(f"{w}x{h}+{(sw-w)//2}+{(sh-h)//2}")
+        dlg.focus_set()
         dlg.wait_window()
         return _result[0]
 
@@ -9448,7 +9458,12 @@ class BOMToolApp(ctk.CTk):
             # Lỗi không mong muốn từ Phase 2
             if result.get('error'):
                 _abort()
-                self._show_msg("Lỗi chuẩn bị dữ liệu", result['error'][:800], 'error')
+                self._log('', 'prescan', 0, 'Error', result['error'], 'error')
+                self._show_msg(
+                    "Lỗi chuẩn bị dữ liệu",
+                    "Đã xảy ra lỗi khi đọc dữ liệu từ file Excel.\n"
+                    "Chi tiết kỹ thuật đã được ghi vào log panel phía dưới.",
+                    'error')
                 return
 
             row        = result['row']
@@ -9476,14 +9491,11 @@ class BOMToolApp(ctk.CTk):
                     f"[{r['sql_col']}]" + (f" ({r['ten_excel']})" if r.get('ten_excel') else '')
                     for r in _null_req
                 )
-                import tkinter.messagebox as _mb
-                _go = _mb.askyesno(
+                _go = self._ask_msg(
                     "Thiếu dữ liệu bắt buộc",
                     f"Các trường sau bắt buộc nhưng không lấy được giá trị "
                     f"(lookup thất bại hoặc để trống):\n\n{_names}\n\n"
-                    f"Tiếp tục import với các trường này để NULL không?",
-                    icon="warning"
-                )
+                    f"Tiếp tục import với các trường này để NULL không?")
                 if not _go:
                     _abort()
                     return

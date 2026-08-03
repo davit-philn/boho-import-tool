@@ -607,6 +607,7 @@ def _ask_excel_password(filename):
               activebackground="#1d4ed8", cursor="hand2").pack(side="left", padx=6)
 
     entry.bind("<Return>", on_ok)
+    dialog.bind("<Escape>", lambda e: on_cancel())
     dialog.wait_window()
     return result[0]
 
