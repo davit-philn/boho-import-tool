@@ -32,6 +32,11 @@ Tools/views/main_window_backup*.py
 # ── Claude internal ───────────────────────────────────────────
 .claude/
 
+# ── Test fixtures (dữ liệu thực tế của công ty, không commit) ────
+tests/fixtures/*.xlsx
+tests/fixtures/row_counts.json
+tests/fixtures/warning_count.txt
+
 # ── OS ────────────────────────────────────────────────────────
 Thumbs.db
 .DS_Store
