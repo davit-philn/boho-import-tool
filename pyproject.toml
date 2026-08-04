@@ -2,6 +2,9 @@
 testpaths   = ["tests"]
 pythonpath  = ["Tools"]
 addopts     = "-v --tb=short"
+markers     = [
+    "integration: tests cần kết nối DB thật — chạy khi VPN bật (deselect với -m 'not integration')",
+]
 
 [tool.ruff]
 target-version = "py310"
