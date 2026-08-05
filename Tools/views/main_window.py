@@ -1368,7 +1368,7 @@ class BOMToolApp(ctk.CTk):
         _SUB_TAB_VIEW   = "📋  Danh sách vật tư"
         _SUB_TAB_IMPORT = "📥  Import dữ liệu"
         self._catalog_subtabs = ctk.CTkTabview(tab,
-            fg_color=("gray88", "transparent"),
+            fg_color="transparent",
             segmented_button_fg_color=("gray85", "#252526"),
             segmented_button_selected_color=("#1D4ED8", "#2563EB"),
             segmented_button_selected_hover_color=("#1E40AF", "#1D4ED8"),
@@ -4235,7 +4235,7 @@ class BOMToolApp(ctk.CTk):
                 lambda: "Soát dòng thiếu Mã VTTB hoặc mã không có trong danh mục"
                         " — phải đạt 0 lỗi mới INSERT được")
 
-        self.btn_thdm_view_sql.pack(side=tk.LEFT, padx=(0, 8))
+        # btn_thdm_view_sql ẩn theo yêu cầu — không pack()
         Tooltip(self.btn_thdm_view_sql,
                 lambda: "Xem câu SQL INSERT sẽ thực thi — dùng để đối chiếu dữ liệu trước khi tạo THDM")
 

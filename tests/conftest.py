@@ -108,7 +108,12 @@ def good_excel_path():
     ── ĐIỀN TÊN FILE BOM CHUẨN CỦA BẠN VÀO ĐÂY ──────────────────────────────
     File phải pass validate layer 1 không có error (warnings OK).
     """
-    fname = "bom_valid.xlsx"   # << THAY TÊN FILE THỰC TẾ CỦA BẠN
+    # Chấp nhận cả .xlsx và .xlsm
+    fname = next(
+        (f for f in ("bom_valid.xlsx", "bom_valid.xlsm")
+         if os.path.exists(os.path.join(FIXTURES_DIR, f))),
+        "bom_valid.xlsx",
+    )
     path  = os.path.join(FIXTURES_DIR, fname)
     if not os.path.exists(path):
         pytest.skip(
@@ -124,7 +129,11 @@ def bad_excel_path():
     ── ĐIỀN TÊN FILE BOM LỖI CỦA BẠN VÀO ĐÂY ────────────────────────────────
     File phải trigger ít nhất 1 validation error khi validate_layer1 chạy.
     """
-    fname = "bom_invalid.xlsx"   # << THAY TÊN FILE THỰC TẾ CỦA BẠN
+    fname = next(
+        (f for f in ("bom_invalid.xlsx", "bom_invalid.xlsm")
+         if os.path.exists(os.path.join(FIXTURES_DIR, f))),
+        "bom_invalid.xlsx",
+    )
     path  = os.path.join(FIXTURES_DIR, fname)
     if not os.path.exists(path):
         pytest.skip(
