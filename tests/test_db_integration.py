@@ -19,14 +19,81 @@ import os
 import datetime
 import pytest
 
-# Đánh dấu toàn bộ module cần integration marker
 pytestmark = pytest.mark.integration
 
 FIXTURES_DIR = os.path.join(os.path.dirname(__file__), "fixtures")
 
-# ── Constants ─────────────────────────────────────────────────────────────────
 BOM_TABLE    = "B20BOM"
 DETAIL_TABLE = "B20BOMDetail"
+
+# ── Schema-aware row builder ──────────────────────────────────────────────────
+#
+# Defaults derived from CK_Mapping_v5.xlsx mac_dinh column (CoDinh + HeThong).
+# _auto_row() reads the actual NOT NULL columns from INFORMATION_SCHEMA and
+# fills them in, so tests don't need to be maintained when the schema changes.
+
+_BOM_KNOWN_DEFAULTS: dict = {
+    "BranchCode": "A01",
+    "DocCode":    "BOM",
+    "DocStatus":  4,
+    "BOMType":    "SX",
+    "TypeB":      "L2",
+    "ModifiedBy": -1,
+    "ParentId":   -1,
+    "IsGroup":    0,
+    "IsActive":   1,
+    "EmployeeId": 1,
+    "IsDraftData": 0,
+    "Version":    "1",
+    "CreatedBy":  1,   # FK User — Id=1 (admin) thường tồn tại
+}
+
+_SQL_TYPE_SAFE: dict = {
+    "varchar": "", "nvarchar": "", "char": "", "nchar": "",
+    "int": 0, "bigint": 0, "smallint": 0, "tinyint": 0,
+    "bit": 0,
+    "numeric": 0, "decimal": 0, "float": 0, "real": 0, "money": 0,
+}
+
+
+def _auto_row(cur, table: str, extra: dict | None = None) -> dict:
+    """
+    Build minimal INSERT row from schema NOT NULL columns + mapping defaults.
+    Skips identity columns. Falls back to zero/empty for unknown types.
+    """
+    _now   = datetime.datetime.now()
+    _today = _now.date()
+
+    cur.execute(
+        """
+        SELECT COLUMN_NAME, DATA_TYPE
+        FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_NAME = ?
+          AND IS_NULLABLE = 'NO'
+          AND COLUMNPROPERTY(OBJECT_ID(TABLE_SCHEMA + '.' + TABLE_NAME),
+                             COLUMN_NAME, 'IsIdentity') = 0
+        ORDER BY ORDINAL_POSITION
+        """,
+        (table,),
+    )
+
+    row: dict = {}
+    for col_name, data_type in cur.fetchall():
+        if col_name in _BOM_KNOWN_DEFAULTS:
+            row[col_name] = _BOM_KNOWN_DEFAULTS[col_name]
+        elif data_type == "date":
+            row[col_name] = _today
+        elif data_type in ("datetime", "datetime2", "smalldatetime"):
+            row[col_name] = _now
+        elif "Id" in col_name or "By" in col_name:
+            row[col_name] = 1  # FK placeholder; fails clearly if FK row missing
+        elif data_type in _SQL_TYPE_SAFE:
+            row[col_name] = _SQL_TYPE_SAFE[data_type]
+        # Unknown types omitted → INSERT may fail with a clear SQL error
+
+    if extra:
+        row.update(extra)
+    return row
 
 
 # ── 1. Smoke test kết nối và schema ──────────────────────────────────────────
@@ -35,7 +102,6 @@ class TestDBConnectivity:
     """Kiểm tra DB accessible và schema đúng trước khi chạy test thực tế."""
 
     def test_connection_alive(self, db_tx):
-        """Thực hiện SELECT 1 — pass = DB reachable."""
         cur = db_tx.cursor()
         cur.execute("SELECT 1 AS ping")
         row = cur.fetchone()
@@ -59,17 +125,8 @@ class TestDBConnectivity:
         count = cur.fetchone()[0]
         assert count > 0, f"Bảng '{DETAIL_TABLE}' không tồn tại trong DB"
 
-    def test_bom_table_has_expected_columns(self, db_tx, db_config):
-        """
-        Verify các cột cốt lõi của B20BOM tồn tại.
-
-        ── ĐIỀU CHỈNH DANH SÁCH COLUMN NẾU SCHEMA THỰC TẾ KHÁC ────────────────
-        """
-        expected_cols = {
-            # Tên column (case-insensitive) mà B20BOM phải có
-            "Id", "ItemId", "BranchCode",
-            # << THÊM COLUMN THỰC TẾ CỦA BẠN VÀO ĐÂY
-        }
+    def test_bom_table_has_expected_columns(self, db_tx):
+        expected_cols = {"Id", "ItemId", "BranchCode"}
         cur = db_tx.cursor()
         cur.execute(
             "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS "
@@ -92,7 +149,6 @@ class TestBOMHeaderInsert:
     """
 
     def _build_insert_sql(self, cols: list[str]) -> str:
-        """Build câu INSERT INTO B20BOM ... OUTPUT INSERTED.Id."""
         return (
             f"INSERT INTO {BOM_TABLE} ({', '.join(f'[{c}]' for c in cols)}) "
             f"OUTPUT INSERTED.Id VALUES ({', '.join(['?'] * len(cols))})"
@@ -101,29 +157,20 @@ class TestBOMHeaderInsert:
     def test_insert_valid_bom_header(self, db_tx):
         """
         INSERT 1 BOM header hợp lệ → verify Id trả về dương.
-
-        ── ĐIỀN GIÁ TRỊ BOM HEADER THỰC TẾ CỦA BẠN VÀO ĐÂY ─────────────────
-        Col + value phải match schema của bảng B20BOM.
-        Lấy từ 1 lần import thực tế (xem Export SQL trong app).
+        _auto_row() tự đọc NOT NULL columns từ INFORMATION_SCHEMA và điền
+        mapping defaults (CoDinh/HeThong). Nếu FK columns không tồn tại
+        với Id=1, test sẽ báo lỗi FK rõ ràng — không skip.
         """
-        test_row = {
-            # "ItemId":     "SP-TEST-001",    # << ĐIỀN
-            # "BranchCode": "TEST",           # << ĐIỀN
-            # "Status":     0,                # << ĐIỀN
-            # ... các cột NOT NULL khác ...   # << ĐIỀN
-        }
+        cur = db_tx.cursor()
+        test_row = _auto_row(cur, BOM_TABLE)
+
         if not test_row:
-            pytest.skip(
-                "test_row chưa được điền — mở test_db_integration.py "
-                "và điền giá trị vào test_insert_valid_bom_header()"
-            )
+            pytest.skip("Không đọc được schema B20BOM — kiểm tra kết nối DB")
 
         cols = list(test_row.keys())
         vals = [test_row[c] for c in cols]
-        sql  = self._build_insert_sql(cols)
 
-        cur = db_tx.cursor()
-        cur.execute(sql, vals)
+        cur.execute(self._build_insert_sql(cols), vals)
         new_id = cur.fetchone()[0]
 
         assert new_id is not None and int(new_id) > 0, (
@@ -131,26 +178,19 @@ class TestBOMHeaderInsert:
         )
 
     def test_insert_then_select_back(self, db_tx):
-        """
-        INSERT header → SELECT lại trong cùng transaction → verify data khớp.
+        """INSERT header → SELECT lại trong cùng transaction → verify data khớp."""
+        cur = db_tx.cursor()
+        test_row = _auto_row(cur, BOM_TABLE)
 
-        ── ĐIỀN GIÁ TRỊ BOM HEADER THỰC TẾ CỦA BẠN VÀO ĐÂY ─────────────────
-        """
-        test_row = {
-            # "ItemId":     "SP-TEST-SELECT",  # << ĐIỀN
-            # "BranchCode": "TEST",            # << ĐIỀN
-        }
         if not test_row:
-            pytest.skip("test_row chưa được điền")
+            pytest.skip("Không đọc được schema B20BOM")
 
         cols = list(test_row.keys())
         vals = [test_row[c] for c in cols]
 
-        cur = db_tx.cursor()
         cur.execute(self._build_insert_sql(cols), vals)
         new_id = cur.fetchone()[0]
 
-        # SELECT lại trong cùng TX (chưa commit)
         cur.execute(f"SELECT Id FROM {BOM_TABLE} WHERE Id = ?", (new_id,))
         found = cur.fetchone()
         assert found is not None, (
@@ -160,34 +200,32 @@ class TestBOMHeaderInsert:
 
     def test_rollback_leaves_no_trace(self, db_conn):
         """
-        Verify rằng sau ROLLBACK (do db_tx fixture), row không còn tồn tại.
-        Test này dùng db_conn (session-scope) chứ không dùng db_tx để
-        đọc state SAU KHI transaction ở test trước đã rollback.
+        Verify rằng sau ROLLBACK row không còn tồn tại.
+        Dùng db_conn (session-scope) để đọc state sau khi TX đã rollback.
         """
-        # Lấy Max Id hiện tại trước khi bắt đầu
         cur = db_conn.cursor()
         cur.execute(f"SELECT ISNULL(MAX(Id), 0) FROM {BOM_TABLE}")
         max_id_before = cur.fetchone()[0]
 
-        # Làm 1 insert trong TX rồi tự rollback
+        test_row = _auto_row(cur, BOM_TABLE)
+        if not test_row:
+            pytest.skip("Không đọc được schema B20BOM")
+
+        cols = list(test_row.keys())
+        vals = [test_row[c] for c in cols]
+        sql = (
+            f"INSERT INTO {BOM_TABLE} ({', '.join(f'[{c}]' for c in cols)}) "
+            f"OUTPUT INSERTED.Id VALUES ({', '.join(['?'] * len(cols))})"
+        )
+
         db_conn.autocommit = False
         try:
-            test_row = {}  # << ĐIỀN NẾU CÓ — xem test_insert_valid_bom_header()
-            if not test_row:
-                pytest.skip("test_row chưa được điền")
-            cols = list(test_row.keys())
-            vals = [test_row[c] for c in cols]
-            sql  = (
-                f"INSERT INTO {BOM_TABLE} ({', '.join(f'[{c}]' for c in cols)}) "
-                f"OUTPUT INSERTED.Id VALUES ({', '.join(['?'] * len(cols))})"
-            )
             cur.execute(sql, vals)
             inserted_id = cur.fetchone()[0]
             db_conn.rollback()
         finally:
             db_conn.autocommit = True
 
-        # Verify row đã biến mất
         cur.execute(f"SELECT COUNT(*) FROM {BOM_TABLE} WHERE Id = ?", (inserted_id,))
         remaining = cur.fetchone()[0]
         assert remaining == 0, (
@@ -202,31 +240,49 @@ class TestFKConstraints:
 
     def test_detail_without_valid_bom_id_fails(self, db_tx):
         """
-        INSERT vào B20BOMDetail với BomId = 999999999 (không tồn tại)
-        phải raise exception (FK violation).
-
-        ── ĐIỀN TÊN COLUMN FK VÀ CÁC COLUMN NOT NULL CỦA B20BOMDetail ────────
+        INSERT vào B20BOMDetail với BomId fake (không tồn tại) → phải raise FK violation.
+        _auto_row() tự fill NOT NULL columns; fake_bom_id ghi đè FK column.
         """
         fake_bom_id = 999_999_999
-        test_detail = {
-            # "BomId":          fake_bom_id,   # << ĐIỀN (tên column FK thực tế)
-            # "BOMDetailType":  1,             # << ĐIỀN
-            # ... các NOT NULL column khác ... # << ĐIỀN
-        }
+
+        cur = db_tx.cursor()
+        # Tìm tên FK column trỏ về B20BOM trong B20BOMDetail
+        cur.execute(
+            """
+            SELECT fk_col.COLUMN_NAME
+            FROM INFORMATION_SCHEMA.REFERENTIAL_CONSTRAINTS rc
+            JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE fk_col
+                ON fk_col.CONSTRAINT_NAME = rc.CONSTRAINT_NAME
+            JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE pk_col
+                ON pk_col.CONSTRAINT_NAME = rc.UNIQUE_CONSTRAINT_NAME
+            WHERE fk_col.TABLE_NAME = ? AND pk_col.TABLE_NAME = ?
+            """,
+            (DETAIL_TABLE, BOM_TABLE),
+        )
+        fk_rows = cur.fetchall()
+
+        if not fk_rows:
+            pytest.skip(
+                f"Không tìm thấy FK từ {DETAIL_TABLE} → {BOM_TABLE}. "
+                "Kiểm tra INFORMATION_SCHEMA.REFERENTIAL_CONSTRAINTS."
+            )
+
+        fk_col = fk_rows[0][0]
+        test_detail = _auto_row(cur, DETAIL_TABLE, extra={fk_col: fake_bom_id})
+
         if not test_detail:
-            pytest.skip("test_detail chưa được điền")
+            pytest.skip("Không đọc được schema B20BOMDetail")
 
         cols = list(test_detail.keys())
         vals = [test_detail[c] for c in cols]
-        sql  = (
+        sql = (
             f"INSERT INTO {DETAIL_TABLE} ({', '.join(f'[{c}]' for c in cols)}) "
             f"VALUES ({', '.join(['?'] * len(cols))})"
         )
-        cur = db_tx.cursor()
+
         with pytest.raises(Exception) as exc_info:
             cur.execute(sql, vals)
         err = str(exc_info.value)
-        # FK violation thường chứa "FOREIGN KEY" hoặc "REFERENCE"
         assert any(kw in err.upper() for kw in ("FOREIGN KEY", "REFERENCE", "FK")), (
             f"Exception phải là FK violation, nhưng got: {err}"
         )
@@ -236,31 +292,48 @@ class TestFKConstraints:
 
 class TestStoredProcedures:
     """
-    Verify các SP được dùng bởi tool tồn tại trong DB.
-
-    ── ĐIỀN DANH SÁCH SP THỰC TẾ CỦA BẠN VÀO ĐÂY ───────────────────────────
-    Lấy từ mapping file: cột SPName trong sheet hooks.
+    Verify các SP được tool gọi tồn tại trong DB (hoặc DB được tham chiếu).
+    Tên SP lấy từ CK_Mapping_v5.xlsx sheet _SP_CONFIG và SP_HOOK.
+    Cross-DB SPs (B10_Boho.dbo.*) được kiểm tra qua [B10_Boho].sys.objects.
     """
+
+    # Extracted từ CK_Mapping_v5.xlsx _SP_CONFIG + SP_HOOK (script mapping_loader)
     REQUIRED_SPS = [
-        # "usp_BOMTool_DeleteBOM",    # << THÊM VÀO
-        # "usp_BOMTool_GetNextBomId", # << THÊM VÀO
-        # ...
+        "B10_Boho.dbo.usp_sys_CreateSttBySeq",
+        "B10_Boho.dbo.usp_B20BOM_AutoVersion",
+        "usp_sys_AutoNewCode",
+        "B10_Boho.dbo.usp_B30BizDoc_DefaultDocNo",
+        "B10_Boho.dbo.usp_B30BizDocDemand_AutoVersion",
+        "B10_Boho.dbo.usp_B20BOM_Create_ItemCode",
     ]
 
     def test_required_sps_exist(self, db_tx):
-        if not self.REQUIRED_SPS:
-            pytest.skip("REQUIRED_SPS chưa được điền")
         cur = db_tx.cursor()
-        for sp_name in self.REQUIRED_SPS:
-            cur.execute(
-                "SELECT COUNT(*) FROM sys.objects "
-                "WHERE type = 'P' AND name = ?", (sp_name,)
-            )
-            count = cur.fetchone()[0]
-            assert count > 0, (
-                f"Stored Procedure '{sp_name}' không tồn tại trong DB.\n"
-                "Kiểm tra lại tên SP hoặc quyền truy cập."
-            )
+        missing = []
+        for sp_full in self.REQUIRED_SPS:
+            parts = sp_full.split(".")
+            sp_name = parts[-1]
+            # Cross-DB: "DB.dbo.name" → query [DB].sys.objects
+            if len(parts) >= 3:
+                db_prefix = parts[0]
+                query = (
+                    f"SELECT COUNT(*) FROM [{db_prefix}].sys.objects "
+                    "WHERE type = 'P' AND name = ?"
+                )
+            else:
+                query = "SELECT COUNT(*) FROM sys.objects WHERE type = 'P' AND name = ?"
+            try:
+                cur.execute(query, (sp_name,))
+                count = cur.fetchone()[0]
+                if count == 0:
+                    missing.append(sp_full)
+            except Exception as exc:
+                missing.append(f"{sp_full} [query error: {exc}]")
+
+        assert not missing, (
+            "Các SP sau không tồn tại hoặc không truy cập được:\n"
+            + "\n".join(f"  - {s}" for s in missing)
+        )
 
 
 # ── 5. Full Pipeline Test ─────────────────────────────────────────────────────
@@ -268,8 +341,7 @@ class TestStoredProcedures:
 class TestFullPipeline:
     """
     End-to-end: parse Excel → validate → build INSERT SQL → execute → verify → rollback.
-
-    Dùng file fixtures/bom_valid.xlsx.
+    Dùng file fixtures/bom_valid.xlsx (skip nếu file chưa có).
     Toàn bộ chạy trong 1 TRANSACTION rồi ROLLBACK.
     """
 
@@ -287,36 +359,21 @@ class TestFullPipeline:
 
     def test_bom_id_generated_is_positive(self, db_tx, good_excel_path, mapping):
         """
-        Step 2: INSERT B20BOM header (dùng giá trị từ meta của Excel fixture)
-        → Id sinh ra phải dương.
-
-        ── ĐIỀN MAPPING FIELD META → SQL COLUMN CỦA BẠN VÀO ĐÂY ──────────────
-        Xem trong main_window.py: phần resolve row để biết meta field nào
-        map vào sql column nào của B20BOM.
+        Step 2: INSERT B20BOM header với CoDinh/HeThong defaults → Id phải dương.
+        Dùng _auto_row() schema-aware thay vì hardcode columns.
         """
-        from services.bom_parser import parse_bom_file
-        _, meta, _, _ = parse_bom_file(good_excel_path)
-
-        # Build row từ meta — điều chỉnh mapping theo schema thực tế
-        bom_row = {
-            # "ItemId":     meta.get("Mã sản phẩm"),  # << ĐIỀN
-            # "BranchCode": meta.get("Dự án"),        # << ĐIỀN
-        }
-        bom_row = {k: v for k, v in bom_row.items() if v is not None}
+        cur = db_tx.cursor()
+        bom_row = _auto_row(cur, BOM_TABLE)
 
         if not bom_row:
-            pytest.skip(
-                "bom_row chưa được điền — "
-                "mở test_db_integration.py::TestFullPipeline::test_bom_id_generated_is_positive"
-            )
+            pytest.skip("Không đọc được schema B20BOM")
 
         cols = list(bom_row.keys())
         vals = [bom_row[c] for c in cols]
-        sql  = (
+        sql = (
             f"INSERT INTO {BOM_TABLE} ({', '.join(f'[{c}]' for c in cols)}) "
             f"OUTPUT INSERTED.Id VALUES ({', '.join(['?'] * len(cols))})"
         )
-        cur = db_tx.cursor()
         cur.execute(sql, vals)
         new_id = cur.fetchone()[0]
         assert int(new_id) > 0, f"BOM Id phải dương, got: {new_id}"
@@ -326,11 +383,9 @@ class TestFullPipeline:
     ):
         """
         Step 3 (advanced): INSERT header + detail rows → đếm trong DB.
-        Đây là integration test phức tạp nhất — cần điền đầy đủ column mapping.
-
-        ── STATUS: SKELETON — cần điền thêm trước khi chạy ───────────────────
+        Đây là integration test phức tạp nhất — cần full pipeline hoạt động.
         """
         pytest.skip(
-            "TestFullPipeline.test_detail_count_matches_parsed_rows chưa được điền.\n"
-            "Xem comment trong file và điền column mapping + SP info."
+            "TestFullPipeline.test_detail_count_matches_parsed_rows cần full pipeline.\n"
+            "Implement sau khi TestBOMHeaderInsert đã pass."
         )

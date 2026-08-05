@@ -3,7 +3,8 @@ build.py — Đóng gói BOHO IMPORT BOM/THDM thành .exe (PyInstaller onedir)
 
 Chạy:
     cd Tools
-    python build.py
+    python build.py            # bản Release (windowed, không console)
+    python build.py --debug    # bản Debug (console window, verbose log)
 
 Output:
     dist/BOHO_IMPORT_BOM_THDM/           ← chạy trực tiếp
@@ -16,6 +17,7 @@ import shutil
 import zipfile
 import subprocess
 import tempfile
+import argparse
 
 # Đảm bảo console Windows in được ký tự UTF-8
 if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
@@ -56,8 +58,11 @@ def _info(msg): print(f"  {msg}")
 
 
 # ── Bước 1: Chạy PyInstaller ──────────────────────────────────────────────────
-def run_pyinstaller():
-    _banner(f"[1/4] PyInstaller → {DIST_APP_DIR}/")
+def run_pyinstaller(debug: bool = False):
+    label = "[DEBUG]" if debug else "[1/4]"
+    _banner(f"{label} PyInstaller → {DIST_APP_DIR}/")
+    if debug:
+        _info("Chế độ DEBUG: console window bật, --debug all")
 
     # Build vào thư mục TEMP để tránh AV (Cortex XDR) lock file trong project dir
     tmp_dir  = tempfile.mkdtemp(prefix="boho_build_")
@@ -74,6 +79,9 @@ def run_pyinstaller():
         "--distpath", tmp_dist,
         "--workpath", tmp_work,
     ]
+    if debug:
+        # Bật console window và verbose PyInstaller log (override spec console=False)
+        cmd += ["--console", "--debug", "all"]
     _info(f"Lệnh: {' '.join(cmd)}")
     ret = subprocess.run(cmd)
     if ret.returncode != 0:
@@ -176,15 +184,27 @@ if __name__ == "__main__":
     # Luôn chạy từ thư mục chứa build.py (Tools/)
     os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
+    parser = argparse.ArgumentParser(description="Build BOHO IMPORT BOM/THDM")
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Build debug variant: bật console window + PyInstaller verbose log",
+    )
+    args = parser.parse_args()
+
+    mode_tag = "DEBUG" if args.debug else "RELEASE"
     print(f"\n{'='*60}")
-    print(f"  BOHO IMPORT BOM/THDM v{VERSION} — Build Script")
+    print(f"  BOHO IMPORT BOM/THDM v{VERSION} — Build Script [{mode_tag}]")
     print(f"  Python {sys.version.split()[0]} | PyInstaller onedir")
     print(f"{'='*60}")
 
-    run_pyinstaller()
+    run_pyinstaller(debug=args.debug)
     copy_config()
-    make_portable_zip()
-    run_inno_setup()
+    if not args.debug:
+        make_portable_zip()
+        run_inno_setup()
+    else:
+        _info("Bỏ qua ZIP/Installer trong debug build.")
 
     print(f"""
 {'='*60}
