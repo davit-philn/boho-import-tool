@@ -4,6 +4,7 @@
 # --- Bắt buộc ---
 pandas
 customtkinter
+Pillow>=10.0
 openpyxl
 pyodbc
 rapidfuzz

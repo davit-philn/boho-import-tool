@@ -82,7 +82,13 @@ def _load_sheet_config(mapping_path=None):
                              "start_row": start_row})
         _wb.close()
         return cfg
-    except Exception:
+    except PermissionError as _pe:
+        import logging as _log
+        _log.warning("_load_sheet_config: file mapping bị khóa (đang mở?): %s", _pe)
+        return []
+    except Exception as _e:
+        import logging as _log
+        _log.warning("_load_sheet_config: không đọc được config, BOM sections sẽ không nhận diện được: %s", _e)
         return []
 
 def _detect_sheet_type(name, sheet_config=None):
@@ -652,6 +658,8 @@ def _is_encrypted_excel(filepath):
             with open(filepath, "rb") as f:
                 office_file = msoffcrypto.OfficeFile(f)
                 return office_file.is_encrypted()
+        except PermissionError:
+            raise  # bubble up — caller sẽ hiện thông báo "đóng file trong Excel"
         except Exception:
             pass
 
@@ -662,6 +670,8 @@ def _is_encrypted_excel(filepath):
             return False  # mở được ZIP → không có password
     except zipfile.BadZipFile:
         return True   # không phải ZIP → khả năng cao bị mã hóa
+    except PermissionError:
+        raise  # bubble up
     except Exception:
         return False
 

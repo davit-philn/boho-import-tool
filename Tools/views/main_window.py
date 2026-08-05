@@ -4404,7 +4404,7 @@ class BOMToolApp(ctk.CTk):
 
         # === TỰ ĐỘNG CHECK QUYỀN / TỒN TẠI ĐỂ FALLBACK DB ===
         try:
-            cur.execute(f"SELECT TOP 0 1 FROM {table}")
+            cur.execute(f"SELECT TOP 0 1 FROM [{table}]")
         except Exception as e:
             err_msg = str(e).lower()
             # 229: Denied Permission, 208: Invalid Object Name
@@ -7513,9 +7513,13 @@ class BOMToolApp(ctk.CTk):
                 self.global_meta   = meta
                 self._current_file = path
                 self.after(0, lambda: self._on_parsed(skipped, warns))
+            except PermissionError:
+                msg = "File đang được mở bởi ứng dụng khác (Excel?).\nĐóng file lại rồi thử lại."
+                self.after(0, lambda m=msg: self._show_msg("Không thể đọc file", m, 'error'))
+                self.after(0, lambda: self._set_status("Lỗi: file đang bị khóa", C["red"]))
             except Exception as ex:
                 msg = str(ex)
-                self.after(0, lambda: self._show_msg("Lỗi đọc file", msg, 'error'))
+                self.after(0, lambda m=msg: self._show_msg("Lỗi đọc file", m, 'error'))
                 self.after(0, lambda: self._set_status("Lỗi đọc file", C["red"]))
             finally:
                 self.after(0, lambda: self.btn_open.config(state=tk.NORMAL))
@@ -9269,13 +9273,13 @@ class BOMToolApp(ctk.CTk):
             self._set_status("🔗  Đã kết nối", C["green"])
         except ConnectionError as e:
             self._set_status("❌  Kết nối thất bại", C["red"])
-            self._show_msg("Lỗi kết nối DB", str(e))
             self._log(fname, "Import", 0, "Lỗi kết nối", str(e), "error")
+            self._show_msg("Lỗi kết nối DB", str(e))
             return
         except Exception as e:
             self._set_status("❌  Lỗi DB", C["red"])
-            self._show_msg("Lỗi DB", str(e))
             self._log(fname, "Import", 0, "Lỗi", str(e), "error")
+            self._show_msg("Lỗi DB", str(e))
             return
 
         conn.autocommit = False
