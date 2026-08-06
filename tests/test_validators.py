@@ -116,6 +116,48 @@ class TestValidateLayer1NumericColumns:
         assert result["[BOM] empty"] == []
 
 
+# ─── validate_layer1 — unmapped columns skipped when mapping present ─────────
+
+FAKE_MAPPING = {
+    "BOM2": [
+        {"sql_col": "SoLuong", "ten_excel": "Số lượng",
+         "bat_buoc": "1", "nguon_dl": "Excel", "kieu_dl": "float", "do_dai": ""},
+    ],
+    "HEADER": []
+}
+
+
+class TestValidateLayer1UnmappedColumns:
+    def test_slsp_nguyen_vat_lieu_with_text_no_error_when_mapping_present(self):
+        """Cột SLSP_Nguyên_vật_liệu chứa text, không có trong mapping → không báo lỗi số."""
+        df = pd.DataFrame({
+            "Số lượng": [1, 2],
+            "SLSP_Nguyên_vật_liệu": ["MDF HMR E1 2M MEL", "Plywood LVD"],
+        })
+        tables = {"[BOM] iv": {"df": df, "type": "BOM2"}}
+        result = validate_layer1(tables, META_OK, mapping=FAKE_MAPPING)
+        errors = result["[BOM] iv"]
+        slsp_errors = [e for e in errors if "SLSP" in e.get("col", "")]
+        assert slsp_errors == [], f"Không mong muốn lỗi từ cột SLSP: {slsp_errors}"
+
+    def test_slsp_phan_lop_with_text_no_error_when_mapping_present(self):
+        """Cột SLSP_Phân_lớp chứa text → không báo lỗi số."""
+        df = pd.DataFrame({
+            "Số lượng": [1],
+            "SLSP_Phân_lớp": ["Lop 1"],
+        })
+        tables = {"[BOM] iv": {"df": df, "type": "BOM2"}}
+        result = validate_layer1(tables, META_OK, mapping=FAKE_MAPPING)
+        errors = result["[BOM] iv"]
+        assert not any("SLSP" in e.get("col", "") for e in errors)
+
+    def test_numeric_col_without_mapping_still_checked(self):
+        """Không có mapping → fallback check tất cả cột NUMERIC_RE (behavior cũ)."""
+        result = validate_layer1(make_table("Số lượng", ["abc"]), META_OK)
+        errors = result["[BOM] test"]
+        assert any(e["severity"] == "error" for e in errors)
+
+
 # ─── count_errors ─────────────────────────────────────────────────────────────
 
 class TestCountErrors:

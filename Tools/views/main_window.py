@@ -7297,6 +7297,7 @@ class BOMToolApp(ctk.CTk):
 
         cols = list(df.columns)
         self.tree["columns"] = cols
+        self.tree["displaycolumns"] = "#all"   # reset trước khi filter
         import tkinter.font as tkfont
         _hfont = tkfont.Font(family="Segoe UI", size=12, weight="bold")
         _dfont = tkfont.Font(family="Segoe UI", size=12)
@@ -7338,6 +7339,9 @@ class BOMToolApp(ctk.CTk):
                     col_w[col] = min(s_w, _MAX_W)
                     self.tree.column(col, width=col_w[col])
             self.tree.insert("", 0, values=sql_row, tags=("sql_names",))
+            # Ẩn cột chưa mapped (sql_row = "—") khỏi tree display
+            visible = [c for c, sv in zip(cols, sql_row) if sv != "—"]
+            self.tree["displaycolumns"] = visible if visible else cols
 
         # ─ Data rows ───────────────────────────────────────────────────────────────────────────────────
         if hasattr(self, "_empty_frame"):
@@ -8128,22 +8132,18 @@ class BOMToolApp(ctk.CTk):
                 _lp = (min(len(norm_val), len(cv_norm))
                        / max(len(norm_val), len(cv_norm), 1))
                 if kieu_lookup == 'fuzzy_name':
-                    s = max(_fuzz.partial_ratio(norm_val, cv_norm) * _lp,
+                    # sqrt(_lp) thay vì _lp: giảm deflation khi hai chuỗi khác độ dài nhiều
+                    s = max(_fuzz.partial_ratio(norm_val, cv_norm) * (_lp ** 0.5),
                             _fuzz.ratio(norm_val, cv_norm))
+                    # contains → floor 75: vào popup nhưng không bao giờ auto-map
+                    if cv_norm and (norm_val in cv_norm or cv_norm in norm_val):
+                        s = max(s, 75.0)
                 else:   # fuzzy_code (default)
                     s = max(_fuzz.ratio(norm_val, cv_norm),
                             _fuzz.partial_ratio(norm_val, cv_norm) * _lp)
                 if s > best:
                     best = s
             return best
-
-        if kieu_lookup == 'fuzzy_name':
-            # Tier 2b: contains check trên tất cả fields
-            for e in cache:
-                for sv in _ss_vals(e):
-                    cv_norm = self._norm_for_match(sv)
-                    if cv_norm and (norm_val in cv_norm or cv_norm in norm_val):
-                        return e['lv'], 'contains'
 
         _min_score = 20 if kieu_lookup == 'fuzzy_name' else 40
         scored = [(s, e) for e in cache
@@ -8153,10 +8153,6 @@ class BOMToolApp(ctk.CTk):
             return None, 'none'
 
         scored.sort(key=lambda x: -x[0])
-        top_score, top_entry = scored[0]
-
-        if top_score >= nguong_fuzzy:
-            return top_entry['lv'], 'fuzzy_auto'
 
         # Popup cho user chọn (top 3) — hiển thị field đầu tiên làm "code"
         candidates = [

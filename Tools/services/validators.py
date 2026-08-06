@@ -132,6 +132,8 @@ def validate_layer1(tables, global_meta, mapping=None):
         # Giá trị placeholder (dấu gạch ngang) → coi như NULL, bỏ qua
         _PLACEHOLDER_RE = re.compile(r"^-+$")
         for col in df.columns:
+            if mapping and col not in col_info:
+                continue   # có mapping nhưng cột chưa mapped → bỏ qua
             if not NUMERIC_RE.search(col):
                 continue
             if _NUMERIC_EXCLUDE_RE.search(col):
