@@ -138,6 +138,11 @@ class _SearchCombo(ctk.CTkFrame):
         if allowed:
             super().configure(**allowed)
 
+    def set_error(self, flag: bool):
+        """Tô đỏ / bỏ đỏ border entry để báo trường bắt buộc chưa chọn."""
+        color = ("#EF4444", "#DC2626") if flag else ("#E2E8F0", "#444444")
+        self._entry.configure(border_color=color)
+
     # ── Popup ─────────────────────────────────────────────────────────────────
     def _toggle_popup(self, _event=None):
         if self._state == "disabled":

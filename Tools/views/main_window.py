@@ -83,6 +83,8 @@ class BOMToolApp(ctk.CTk):
         self.val_errors    = {}
         self.mapping       = load_mapping()
         self._current_file = ""
+        self._bom_order_map          = {}    # display → BizDocId
+        self._bom_selected_order_id  = None  # BizDocId đã chọn
         self._batch_files  = []
         self._loading_dlg  = None
         self._last_import_bom_id = None   # BOM Id của lần import gần nhất (cho Hoàn tác)
@@ -722,6 +724,7 @@ class BOMToolApp(ctk.CTk):
             self._auto_loaded_after_startup = True
             self.after(200, self._load_creator_combo)
             self.after(400, self._thdm_load_products)
+            self.after(600, self._load_bom_orders)
 
 
     def _build_ui(self):
@@ -881,6 +884,23 @@ class BOMToolApp(ctk.CTk):
             command=self._on_creator_change,
             placeholder="— Chọn nhân viên —")
         self.cmb_creator.pack(side=tk.LEFT, padx=(0, 6), pady=10)
+
+        ctk.CTkFrame(bar, fg_color=("gray65","#3C3C3C"),
+                     width=1, height=28).pack(side=tk.LEFT, padx=6, pady=PAD_MD)
+
+        ctk.CTkLabel(bar, text="Đơn hàng:",
+            font=ctk.CTkFont(*FONT_BODY),
+            text_color=("gray40","gray55"),
+            fg_color="transparent").pack(side=tk.LEFT, padx=(0, 4))
+        self.cmb_order = _SearchCombo(bar,
+            values=["— Đang tải... —"],
+            width=200, height=32,
+            font=ctk.CTkFont(*FONT_BODY),
+            command=self._on_bom_order_change,
+            placeholder="— Chọn đơn hàng —",
+            state="disabled")
+        self.cmb_order.set("— Chọn đơn hàng —")
+        self.cmb_order.pack(side=tk.LEFT, padx=(0, 6), pady=10)
 
         ctk.CTkFrame(bar, fg_color=("gray65","#3C3C3C"),
                      width=1, height=28).pack(side=tk.LEFT, padx=6, pady=PAD_MD)
@@ -4548,6 +4568,7 @@ class BOMToolApp(ctk.CTk):
             if user_id is None:
                 user_id = DEFAULT_CREATOR_USER_ID
         self._current_creator_user_id = user_id
+        self.cmb_creator.set_error(False)
         # Sau khi chọn chỉ hiển thị Code (phần trước |)
         if selected_name and "|" in selected_name:
             self.cmb_creator.set(selected_name.split("|")[0].strip())
@@ -4565,6 +4586,7 @@ class BOMToolApp(ctk.CTk):
             if user_id is None:
                 user_id = DEFAULT_CREATOR_USER_ID
         self._thdm_creator_user_id     = user_id
+        self.cmb_thdm_creator.set_error(False)
         # EmployeeId riêng: B20Employee.Id (khác UserId) dùng cho THDM_HEADER.EmployeeId
         self._thdm_creator_employee_id = getattr(self, '_employee_id_map', {}).get(selected_name)
         # Sau khi chọn chỉ hiển thị Code (phần trước |)
@@ -4632,6 +4654,7 @@ class BOMToolApp(ctk.CTk):
         if "|" in selected:
             self.cmb_thdm_product.set(selected.split("|")[0].strip())
         self._thdm_selected_product_id = product_id
+        self.cmb_thdm_product.set_error(False)
         self._thdm_load_orders(product_id)
 
     # ── THDM: Load Đơn hàng ───────────────────────────────────────────────────
@@ -4653,9 +4676,10 @@ class BOMToolApp(ctk.CTk):
                        CONVERT(varchar(10), DocDate, 103)           AS DocDate,
                        ISNULL(Description, '')                      AS Descr
                 FROM   B30BizDocSO
-                WHERE  DocCode = 'FO'
+                WHERE  DocCode  = 'FO'
                   AND  ProductId = ?
                   AND  IsActive  = 1
+                  AND  DocStatus = 4
                 ORDER  BY DocDate DESC, DocNo2
             """
             conn = self._get_db_conn()
@@ -4695,6 +4719,75 @@ class BOMToolApp(ctk.CTk):
             text=f"✅  {len(rows):,} đơn hàng",
             fg=C["green"])
 
+    # ── Import BOM: Dropdown Đơn hàng ─────────────────────────────────────────
+
+    def _load_bom_orders(self):
+        import threading as _th
+        _th.Thread(target=self._load_bom_orders_worker, daemon=True).start()
+
+    def _load_bom_orders_worker(self):
+        try:
+            sql = """
+                SELECT BizDocId,
+                       ISNULL(DocNo2, DocNo)                        AS DocNo2,
+                       CONVERT(varchar(10), DocDate, 103)           AS DocDate,
+                       ISNULL(Description, '')                      AS Descr
+                FROM   B30BizDocSO
+                WHERE  DocCode = 'FO'
+                  AND  IsActive  = 1
+                  AND  DocStatus = 4
+                ORDER  BY DocDate DESC, DocNo2
+            """
+            conn = self._get_db_conn()
+            cur  = conn.cursor()
+            cur.execute(sql)
+            rows = cur.fetchall()
+            conn.close()
+            self.after(0, lambda d=rows: self._load_bom_orders_done(d, None))
+        except Exception as e:
+            self.after(0, lambda err=e: self._load_bom_orders_done([], str(err)))
+
+    def _load_bom_orders_done(self, rows, error):
+        if error or not rows:
+            self.cmb_order.configure(state="normal", values=["— Chọn đơn hàng —"])
+            self.cmb_order.set("— Chọn đơn hàng —")
+            return
+        def _disp(r):
+            return f"{r[1]}  |  {r[2]}  |  {r[3]}"
+        disp_list = [_disp(r) for r in rows]
+        self._bom_order_map = {d: r[0] for r, d in zip(rows, disp_list)}
+        self.cmb_order.configure(state="normal", values=["— Chọn đơn hàng —"] + disp_list)
+        self.cmb_order.set("— Chọn đơn hàng —")
+        self._bom_try_auto_select_order()
+
+    def _on_bom_order_change(self, value=None):
+        selected = self.cmb_order.get()
+        self._bom_selected_order_id = self._bom_order_map.get(selected)
+        self.cmb_order.set_error(not bool(self._bom_selected_order_id))
+        if self.val_errors is not None:
+            n_err, _ = count_errors(self.val_errors)
+            has_creator = bool(self._current_creator_user_id)
+            self.btn_import.config(
+                state=tk.NORMAL if n_err == 0 and self._bom_selected_order_id and has_creator
+                else tk.DISABLED)
+
+    def _bom_try_auto_select_order(self):
+        """Khớp 'Đơn hàng' trong Excel header với dropdown.
+        - Khớp       -> auto-select
+        - Không khớp -> clear (buộc user chọn lại)
+        - Trống       -> clear
+        """
+        excel_val = str(self.global_meta.get("Đơn hàng", "") or "").strip()
+        if excel_val:
+            for disp, bid in self._bom_order_map.items():
+                if excel_val in disp or disp.startswith(excel_val):
+                    self.cmb_order.set(disp)
+                    self._bom_selected_order_id = bid
+                    return
+        # Không tìm thấy match hoặc Excel không có "Đơn hàng" -> clear
+        self.cmb_order.set("— Chọn đơn hàng —")
+        self._bom_selected_order_id = None
+
     def _thdm_on_order_change(self, value=None):
         selected = self.cmb_thdm_order.get()
         order_id = self._thdm_order_map.get(selected)   # BizDocId string, ví dụ "11034510FO"
@@ -4710,6 +4803,7 @@ class BOMToolApp(ctk.CTk):
         # Sau khi chọn chỉ hiển thị DocNo2 (phần trước |)
         if "|" in selected:
             self.cmb_thdm_order.set(selected.split("|")[0].strip())
+        self.cmb_thdm_order.set_error(False)
         self._thdm_load_bom_list()
         self._thdm_load_period_by_order(order_id)   # Task 10
 
@@ -4768,6 +4862,7 @@ class BOMToolApp(ctk.CTk):
     def _on_thdm_period_change(self, selected_name=None):
         selected = self.cmb_thdm_period.get()
         self._thdm_selected_period_id = self._thdm_period_active_map.get(selected)
+        self.cmb_thdm_period.set_error(not bool(self._thdm_selected_period_id))
         if self._thdm_selected_period_id is None:
             self._thdm_valid_builtin_orders = None
             self._thdm_filter_bom()
@@ -5759,12 +5854,9 @@ class BOMToolApp(ctk.CTk):
         self._thdm_val_errors      = {}
         self._thdm_val_lk_fails    = {}
         self._thdm_validate_caches = {}
-
-        # FIX 1: Xóa fuzzy resolutions cũ — tránh kết quả tra cứu cũ che khuất mã
-        # vừa được bổ sung vào DB. Các resolve fuzzy sẽ được thực hiện lại với
-        # cache mới nhất từ DB trong lần validate này.
-        if hasattr(self, '_fuzzy_resolutions'):
-            self._fuzzy_resolutions.clear()
+        # _fuzzy_resolutions KHÔNG clear: lựa chọn user đã xác nhận được giữ lại
+        # qua các lần Kiểm tra. Nếu mã vừa được bổ sung vào DB, Tier 1/2 sẽ tìm
+        # thấy trực tiếp trước khi chạm tới _fuzzy_resolutions — không bị mask.
 
         conn = None
         try:
@@ -6437,6 +6529,11 @@ class BOMToolApp(ctk.CTk):
         if not self._thdm_selected_period_id:
             _missing.append("Đợt")
         if _missing:
+            self.cmb_thdm_product.set_error(not bool(self._thdm_selected_product_id))
+            self.cmb_thdm_order.set_error(not bool(self._thdm_selected_order_id))
+            self.cmb_thdm_creator.set_error(
+                not bool(self._thdm_creator_user_id or self._current_creator_user_id))
+            self.cmb_thdm_period.set_error(not bool(self._thdm_selected_period_id))
             self._show_msg("Thiếu thông tin",
                 "Vui lòng chọn đầy đủ trước khi Tạo THDM:\n\n"
                 + "\n".join(f"  •  {f}" for f in _missing),
@@ -7552,6 +7649,7 @@ class BOMToolApp(ctk.CTk):
         self.btn_validate.config(state=tk.NORMAL)
         self.btn_import.config(state=tk.DISABLED)
         self.btn_report.config(state=tk.DISABLED)
+        self._bom_try_auto_select_order()
 
         if self.tables:
             self.listbox.selection_set(0)
@@ -7587,7 +7685,12 @@ class BOMToolApp(ctk.CTk):
         ])
 
         if n_err == 0:
-            self.btn_import.config(state=tk.NORMAL)
+            has_order   = bool(self._bom_selected_order_id)
+            has_creator = bool(self._current_creator_user_id)
+            self.btn_import.config(
+                state=tk.NORMAL if (has_order and has_creator) else tk.DISABLED)
+            self.cmb_order.set_error(not has_order)
+            self.cmb_creator.set_error(not has_creator)
             self._set_status("Validate OK — " + str(n_wrn) + " canh bao", C["green"])
             self._log(fname, "Validate", "—", "OK", str(n_wrn) + " canh bao", "ok")
             self._show_msg("Validate",
@@ -9255,11 +9358,24 @@ class BOMToolApp(ctk.CTk):
             , 'error')
             return
         if not self._current_creator_user_id:
+            self.cmb_creator.set_error(True)
             self._show_msg(
                 "Chưa chọn Nhân viên",
                 "Vui lòng chọn Nhân viên trước khi Import.",
                 'warning')
+            self._import_running = False
+            self.btn_import.configure(state="normal")
             return
+        if not self._bom_selected_order_id:
+            self.cmb_order.set_error(True)
+            self._show_msg(
+                "Chưa chọn Đơn hàng",
+                "Vui lòng chọn Đơn hàng trước khi Import.",
+                'warning')
+            self._import_running = False
+            self.btn_import.configure(state="normal")
+            return
+        self.global_meta["Đơn hàng"] = self._bom_selected_order_id
 
         # ── 2. Kết nối DB ────────────────────────────────────────────────────
         self._set_status("⏳  Đang kết nối DB...", C["yellow"])
