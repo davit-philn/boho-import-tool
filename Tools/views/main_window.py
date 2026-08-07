@@ -9539,8 +9539,6 @@ class BOMToolApp(ctk.CTk):
             self.btn_import.configure(state="normal")
             self.btn_view_sql.configure(state="normal")
             return
-        self.global_meta["Đơn hàng"] = self._bom_selected_order_id
-
         # ── 2. Kết nối DB ────────────────────────────────────────────────────
         self._set_status("⏳  Đang kết nối DB...", C["yellow"])
         self.update()   # force render status ngay lập tức
@@ -9706,6 +9704,10 @@ class BOMToolApp(ctk.CTk):
                     if mt not in ('codinh', 'hethong', 'excel_direct', 'sp',
                                   'tinhtoan', 'passthrough', 'fuzzy_pending'):
                         lookup_log[sql_col] = mt
+
+                # ParentBizDocId: user đã chọn từ dropdown → dùng trực tiếp, không qua fuzzy
+                if self._bom_selected_order_id:
+                    row['ParentBizDocId'] = self._bom_selected_order_id
 
                 # ── Giải quyết trường SP ─────────────────────────────────────
                 self.after(0, lambda: self._update_loading_msg(
