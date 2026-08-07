@@ -18,6 +18,7 @@ import zipfile
 import subprocess
 import tempfile
 import argparse
+import json
 
 # Đảm bảo console Windows in được ký tự UTF-8
 if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
@@ -156,6 +157,52 @@ def make_portable_zip():
     _ok(f"{PORTABLE_ZIP}  ({size_mb:.1f} MB, {total_files} files)")
 
 
+# ── Bước 3b: Copy version.json + sync CURRENT_VERSION trong updater.py ────────
+def sync_version():
+    _banner("[3b] Sync version.json → dist + updater.py")
+    import re as _re
+
+    # 1) Copy version.json từ repo root vào dist (kế bên EXE)
+    vj_src = os.path.join(os.path.dirname(__file__), "..", "version.json")
+    vj_dst = os.path.join(DIST_APP_DIR, "version.json")
+    if os.path.exists(vj_src):
+        # Update version + download_url trong file trước khi copy
+        with open(vj_src, encoding="utf-8") as f:
+            vj = json.load(f)
+        vj["version"] = VERSION
+        vj["download_url"] = (
+            f"https://github.com/davit-philn/boho-import-tool/"
+            f"releases/download/v{VERSION}/{APP_NAME}_v{VERSION}_Portable.zip"
+        )
+        import datetime as _dt
+        vj["release_date"] = _dt.date.today().isoformat()
+        with open(vj_src, "w", encoding="utf-8") as f:
+            json.dump(vj, f, ensure_ascii=False, indent=4)
+        shutil.copy2(vj_src, vj_dst)
+        _ok(f"version.json → {vj_dst}  (v{VERSION})")
+    else:
+        _warn("Không tìm thấy version.json ở repo root — bỏ qua.")
+
+    # 2) Patch CURRENT_VERSION trong services/updater.py
+    updater_path = os.path.join("services", "updater.py")
+    if os.path.exists(updater_path):
+        with open(updater_path, encoding="utf-8") as f:
+            src = f.read()
+        new_src = _re.sub(
+            r'(CURRENT_VERSION\s*=\s*")[^"]*(")',
+            rf'\g<1>{VERSION}\g<2>',
+            src,
+        )
+        if new_src != src:
+            with open(updater_path, "w", encoding="utf-8") as f:
+                f.write(new_src)
+            _ok(f"updater.py: CURRENT_VERSION = \"{VERSION}\"")
+        else:
+            _info("updater.py: CURRENT_VERSION đã đúng.")
+    else:
+        _warn("Không tìm thấy services/updater.py — bỏ qua.")
+
+
 # ── Bước 4: Inno Setup Installer (tùy chọn) ──────────────────────────────────
 def run_inno_setup():
     _banner("[4/4] Inno Setup → Setup.exe (tùy chọn)")
@@ -200,6 +247,7 @@ if __name__ == "__main__":
 
     run_pyinstaller(debug=args.debug)
     copy_config()
+    sync_version()
     if not args.debug:
         make_portable_zip()
         run_inno_setup()

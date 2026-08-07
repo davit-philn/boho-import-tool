@@ -61,6 +61,10 @@ from services.validators import (
     validate_layer1, count_errors,
     REQUIRED_HEADER_FIELDS, NUMERIC_RE,
 )
+try:
+    from services import updater as _updater
+except Exception:
+    _updater = None
 from views.widgets import (
     CLabel, CButton, _SearchCombo, Tooltip, SheetTable,
 )
@@ -116,6 +120,8 @@ class BOMToolApp(ctk.CTk):
         self.deiconify()
         self.update()
         self.after(100, lambda: self.wm_state('zoomed'))
+        # Kiểm tra update sau 5s (để app fully loaded trước)
+        self.after(5000, self._check_for_update)
 
     def _setup_styles(self):
         """TTK styles — dùng THEMES để đồng bộ Dark/Light."""
@@ -170,6 +176,76 @@ class BOMToolApp(ctk.CTk):
         self.option_add("*TCombobox*Listbox.selectForeground", "#FFFFFF")
         self.option_add("*TCombobox*Listbox.relief", "flat")
         self.option_add("*TCombobox*Listbox.font", "{Segoe UI} 12")
+
+    # ── Auto-update ───────────────────────────────────────────────────────────
+    def _check_for_update(self):
+        """Gọi trong background sau 5s — không block UI."""
+        if not _updater:
+            return
+        def _cb(info):
+            if info:
+                self.after(0, lambda: self._on_update_found(info))
+        _updater.check_update_async(_cb)
+
+    def _on_update_found(self, info: dict):
+        """Hiện nút update khi phát hiện bản mới."""
+        self._update_info = info
+        ver = info.get("version", "?")
+        self._btn_update.configure(text=f"🔔  Có bản v{ver} — Nhấn để tải")
+        self._btn_update.pack(side=tk.LEFT, padx=(8, 0))
+
+    def _on_update_btn_click(self):
+        """Xử lý click nút update: tải ngầm → khi xong đổi sang nút Restart."""
+        if self._update_zip:
+            # ZIP đã tải xong → apply
+            if messagebox.askyesno(
+                "Cập nhật",
+                "Ứng dụng sẽ khởi động lại để áp dụng bản mới.\nTiếp tục?",
+                parent=self,
+            ):
+                _updater.apply_update(self._update_zip)
+            return
+
+        if not self._update_info:
+            return
+
+        url = self._update_info.get("download_url", "")
+        if not url:
+            return
+
+        ver = self._update_info.get("version", "?")
+        self._btn_update.configure(
+            text=f"⏳  Đang tải v{ver}... 0%",
+            state="disabled",
+        )
+
+        def _progress(downloaded, total):
+            if total > 0:
+                pct = int(downloaded * 100 / total)
+                self.after(0, lambda p=pct: self._btn_update.configure(
+                    text=f"⏳  Đang tải v{ver}... {p}%"))
+
+        def _download_worker():
+            try:
+                zip_path = _updater.download_update(url, _progress)
+                self.after(0, lambda z=zip_path: self._on_download_done(z, ver))
+            except Exception as e:
+                self.after(0, lambda: self._btn_update.configure(
+                    text=f"❌  Tải thất bại — thử lại",
+                    state="normal",
+                ))
+
+        threading.Thread(target=_download_worker, daemon=True).start()
+
+    def _on_download_done(self, zip_path: str, ver: str):
+        """Khi tải ZIP xong → đổi nút thành Restart."""
+        self._update_zip = zip_path
+        self._btn_update.configure(
+            text=f"✅  v{ver} sẵn sàng — Khởi động lại",
+            state="normal",
+            fg_color=("#D97706","#D97706"),
+            hover_color=("#B45309","#B45309"),
+        )
 
     # ── CTk appearance callbacks (từ sidebar OptionMenu) ──────────────────────
     def _setup_scrollbar_style(self):
@@ -794,7 +870,18 @@ class BOMToolApp(ctk.CTk):
             hover_color=("gray90","gray25"),
             font=ctk.CTkFont(*FONT_BODY),
             width=34, height=28, corner_radius=6)
-        self._btn_settings.pack(side=tk.LEFT)
+        self._btn_settings.pack(side=tk.LEFT, padx=(4, 0))
+
+        # Update notification button — ẩn mặc định, hiện khi có bản mới
+        self._btn_update = ctk.CTkButton(right_bar, text="",
+            command=self._on_update_btn_click,
+            fg_color=("#16A34A","#16A34A"),
+            hover_color=("#15803D","#15803D"),
+            text_color="#FFFFFF",
+            font=ctk.CTkFont(*FONT_BODY),
+            height=28, corner_radius=6)
+        self._update_info   = None   # dict từ version.json nếu có bản mới
+        self._update_zip    = None   # đường dẫn ZIP sau khi tải xong
 
         # ── Tabview ──────────────────────────────────────────────────────────
         self.nb = ctk.CTkTabview(self,
