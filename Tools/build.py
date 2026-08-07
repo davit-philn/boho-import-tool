@@ -199,6 +199,38 @@ def sync_version():
             _ok(f"updater.py: CURRENT_VERSION = \"{VERSION}\"")
         else:
             _info("updater.py: CURRENT_VERSION đã đúng.")
+
+    # 3) Patch APP_VERSION trong services/utils.py (hiển thị trên title bar)
+    utils_path = os.path.join("services", "utils.py")
+    if os.path.exists(utils_path):
+        with open(utils_path, encoding="utf-8") as f:
+            src = f.read()
+        new_src = _re.sub(
+            r'(APP_VERSION\s*=\s*")[^"]*(")',
+            rf'\g<1>{VERSION}\g<2>',
+            src,
+        )
+        if new_src != src:
+            with open(utils_path, "w", encoding="utf-8") as f:
+                f.write(new_src)
+            _ok(f"utils.py: APP_VERSION = \"{VERSION}\"")
+        else:
+            _info("utils.py: APP_VERSION đã đúng.")
+
+    # 4) Patch AppVersion trong setup.iss (Inno Setup installer)
+    iss_path = "setup.iss"
+    if os.path.exists(iss_path):
+        with open(iss_path, encoding="utf-8") as f:
+            src = f.read()
+        new_src = _re.sub(
+            r'(#define AppVersion\s+")[^"]*(")',
+            rf'\g<1>{VERSION}\g<2>',
+            src,
+        )
+        if new_src != src:
+            with open(iss_path, "w", encoding="utf-8") as f:
+                f.write(new_src)
+            _ok(f"setup.iss: AppVersion = \"{VERSION}\"")
     else:
         _warn("Không tìm thấy services/updater.py — bỏ qua.")
 
