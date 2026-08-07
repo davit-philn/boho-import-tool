@@ -5621,6 +5621,8 @@ class BOMToolApp(ctk.CTk):
     def _thdm_mt_dblclick(self, event, sec):
         """Feature 2: extra_double_b1_func callback — raw tkinter event (.x, .y).
         Dùng MT.identify_row(y=event.y) để lấy row index."""
+        if getattr(self, '_fuzzy_collect_mode', False):
+            return  # validate đang chạy background → tránh race condition
         tr = self._thdm_sec_trees.get(sec)
         if tr is None:
             return
@@ -6079,8 +6081,8 @@ class BOMToolApp(ctk.CTk):
                 lk_fails[(sec, idx)] = remaining
             else:
                 del lk_fails[(sec, idx)]
-        # Cache đã dùng để resolve → xóa để validate lần sau build lại từ DB
-        self._thdm_validate_caches.clear()
+        # Cache giữ nguyên cho Quick Map (double-click dòng lỗi còn sót)
+        # Sẽ được reset tự động bởi _thdm_start_validate ở lần Kiểm tra tiếp
 
     def _thdm_on_cell_edited(self, event, sec):
         """NHỊP 1: Sync ô vừa sửa → preview_data và bỏ tô đỏ ngay lập tức."""
@@ -6558,8 +6560,7 @@ class BOMToolApp(ctk.CTk):
         if not ok:
             return
         # Bỏ bước prescan: bước ④ đã resolve hết → chạy thẳng INSERT
-        # _fuzzy_batch_done=True suppresses popup cho mọi case còn sót
-        self._fuzzy_resolutions = {}
+        # _fuzzy_batch_done=True suppresses popup mới; _fuzzy_resolutions GIỮ NGUYÊN
         self._fuzzy_batch_done  = True
         self.btn_thdm_insert.configure(state="disabled", text="⏳  Đang tạo phiếu...")
         self._loading_dlg = self._make_loading_popup(
