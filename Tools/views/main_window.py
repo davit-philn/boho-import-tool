@@ -4672,7 +4672,7 @@ class BOMToolApp(ctk.CTk):
             # BizDocId = string dạng "11034510FO", dùng cho INSERT BizDocId_SO và BOM filter
             sql = """
                 SELECT BizDocId,
-                       ISNULL(DocNo2, DocNo)                        AS DocNo2,
+                       ISNULL(CONCAT(DocNo2,'_',Version), DocNo)    AS DocNo2,
                        CONVERT(varchar(10), DocDate, 103)           AS DocDate,
                        ISNULL(Description, '')                      AS Descr
                 FROM   B30BizDocSO
@@ -4729,7 +4729,7 @@ class BOMToolApp(ctk.CTk):
         try:
             sql = """
                 SELECT BizDocId,
-                       ISNULL(DocNo2, DocNo)                        AS DocNo2,
+                       ISNULL(CONCAT(DocNo2,'_',Version), DocNo)    AS DocNo2,
                        CONVERT(varchar(10), DocDate, 103)           AS DocDate,
                        ISNULL(Description, '')                      AS Descr
                 FROM   B30BizDocSO
