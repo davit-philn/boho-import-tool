@@ -666,7 +666,7 @@ class BOMToolApp(ctk.CTk):
         ctk.CTkLabel(center, text="BOHO IMPORT BOM/THDM",
                      font=ctk.CTkFont("Segoe UI", 24, "bold"),
                      text_color=dt["text_main"]).pack()
-        ctk.CTkLabel(center, text="v1  —  BOHO",
+        ctk.CTkLabel(center, text=f"v{APP_VERSION}  —  BOHO",
                      font=ctk.CTkFont(*FONT_MD),
                      text_color=dt["text_muted"]).pack(pady=(3, 22))
 
