@@ -133,7 +133,14 @@ $notify.BalloonTipTitle = 'BOHO IMPORT - Dang cap nhat'
 $notify.BalloonTipText  = 'Dang ap dung ban moi, vui long doi...'
 $notify.ShowBalloonTip(15000)
 
-Start-Sleep -Seconds 2
+# Chờ process tắt hẳn (tối đa 15s) trước khi copy đè EXE
+$processName = [System.IO.Path]::GetFileNameWithoutExtension('{_ps(app_exe)}')
+$waited = 0
+while ((Get-Process -Name $processName -ErrorAction SilentlyContinue) -and $waited -lt 15) {{
+    Start-Sleep -Seconds 1
+    $waited++
+}}
+Start-Sleep -Seconds 1
 
 $zipPath    = '{_ps(zip_path)}'
 $extractTmp = '{_ps(extract_tmp)}'
@@ -160,7 +167,17 @@ try {{
 # Copy nội dung subfolder đầu tiên → app dir
 $inner = Get-ChildItem $extractTmp -Directory | Select-Object -First 1
 if ($inner) {{
-    Copy-Item (Join-Path $inner.FullName '*') $appDir -Recurse -Force
+    try {{
+        Copy-Item (Join-Path $inner.FullName '*') $appDir -Recurse -Force -ErrorAction Stop
+    }} catch {{
+        Add-Content "$env:TEMP\boho_update_error.log" "Copy failed: $_ | src=$($inner.FullName) dst=$appDir"
+        $notify.BalloonTipTitle = 'BOHO IMPORT - Cap nhat that bai'
+        $notify.BalloonTipText  = "Khong the ghi de file. Xem log: $env:TEMP\boho_update_error.log"
+        $notify.ShowBalloonTip(8000)
+        Start-Sleep -Seconds 3
+        $notify.Dispose()
+        exit 1
+    }}
 }}
 
 # Phục hồi db_config.json
