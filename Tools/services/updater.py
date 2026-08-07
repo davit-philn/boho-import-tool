@@ -21,7 +21,7 @@ CURRENT_VERSION = "2.1"   # auto-updated by build.py
 
 VERSION_URL = (
     "https://raw.githubusercontent.com/davit-philn/"
-    "boho-import-tool/main/version.json"
+    "boho-import-tool/master/version.json"
 )
 
 
