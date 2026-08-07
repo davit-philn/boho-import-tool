@@ -123,6 +123,16 @@ def apply_update(zip_path: str):
     db_cfg_bak  = os.path.join(tempfile.gettempdir(), "boho_db_config.bak")
 
     ps1 = f"""
+Add-Type -AssemblyName System.Windows.Forms
+
+# Tray icon thông báo "Đang cập nhật..."
+$notify = New-Object System.Windows.Forms.NotifyIcon
+$notify.Icon = [System.Drawing.SystemIcons]::Information
+$notify.Visible = $true
+$notify.BalloonTipTitle = 'BOHO IMPORT - Dang cap nhat'
+$notify.BalloonTipText  = 'Dang ap dung ban moi, vui long doi...'
+$notify.ShowBalloonTip(15000)
+
 Start-Sleep -Seconds 2
 
 $zipPath    = '{_ps(zip_path)}'
@@ -143,6 +153,7 @@ try {{
     Expand-Archive -Path $zipPath -DestinationPath $extractTmp -Force
 }} catch {{
     Add-Content '$env:TEMP\\boho_update_error.log' "Extract failed: $_"
+    $notify.Dispose()
     exit 1
 }}
 
@@ -161,6 +172,13 @@ if (Test-Path $dbCfgBak) {{
 # Dọn temp
 Remove-Item $extractTmp -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item $zipPath    -Force          -ErrorAction SilentlyContinue
+
+# Thông báo hoàn tất
+$notify.BalloonTipTitle = 'BOHO IMPORT - Cap nhat xong!'
+$notify.BalloonTipText  = 'Dang khoi dong lai ung dung...'
+$notify.ShowBalloonTip(4000)
+Start-Sleep -Seconds 1
+$notify.Dispose()
 
 # Relaunch app
 Start-Process $appExe

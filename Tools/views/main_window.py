@@ -200,7 +200,10 @@ class BOMToolApp(ctk.CTk):
             # ZIP đã tải xong → apply
             if messagebox.askyesno(
                 "Cập nhật",
-                "Ứng dụng sẽ khởi động lại để áp dụng bản mới.\nTiếp tục?",
+                "Ứng dụng sẽ tắt để áp dụng bản mới.\n\n"
+                "⏱  Quá trình mất khoảng 10–15 giây.\n"
+                "Ứng dụng sẽ tự động mở lại — vui lòng đợi thông báo ở góc màn hình.\n\n"
+                "Tiếp tục?",
                 parent=self,
             ):
                 _updater.apply_update(self._update_zip)
