@@ -85,6 +85,7 @@ class BOMToolApp(ctk.CTk):
         self._current_file = ""
         self._bom_order_map          = {}    # display → BizDocId
         self._bom_selected_order_id  = None  # BizDocId đã chọn
+        self._bom_layer2_done        = False  # True sau khi Layer 2 prescan hoàn thành tại Kiểm tra
         self._batch_files  = []
         self._loading_dlg  = None
         self._last_import_bom_id = None   # BOM Id của lần import gần nhất (cho Hoàn tác)
@@ -4568,6 +4569,7 @@ class BOMToolApp(ctk.CTk):
             if user_id is None:
                 user_id = DEFAULT_CREATOR_USER_ID
         self._current_creator_user_id = user_id
+        self._bom_layer2_done = False
         self.cmb_creator.set_error(False)
         # Sau khi chọn chỉ hiển thị Code (phần trước |)
         if selected_name and "|" in selected_name:
@@ -4763,6 +4765,7 @@ class BOMToolApp(ctk.CTk):
     def _on_bom_order_change(self, value=None):
         selected = self.cmb_order.get()
         self._bom_selected_order_id = self._bom_order_map.get(selected)
+        self._bom_layer2_done = False
         self.cmb_order.set_error(not bool(self._bom_selected_order_id))
         if self.val_errors is not None:
             n_err, _ = count_errors(self.val_errors)
@@ -7594,6 +7597,7 @@ class BOMToolApp(ctk.CTk):
         self._set_status("Đang bóc tách dữ liệu...", C["yellow"])
         self.btn_open.config(state=tk.DISABLED)
         self.val_errors = {}
+        self._bom_layer2_done = False
         self.update()
 
         def worker():
@@ -7688,14 +7692,19 @@ class BOMToolApp(ctk.CTk):
         if n_err == 0:
             has_order   = bool(self._bom_selected_order_id)
             has_creator = bool(self._current_creator_user_id)
-            self.btn_import.config(
-                state=tk.NORMAL if (has_order and has_creator) else tk.DISABLED)
+            self.btn_import.config(state=tk.DISABLED)
             self.cmb_order.set_error(not has_order)
             self.cmb_creator.set_error(not has_creator)
-            self._set_status("Validate OK — " + str(n_wrn) + " canh bao", C["green"])
             self._log(fname, "Validate", "—", "OK", str(n_wrn) + " canh bao", "ok")
-            self._show_msg("Validate",
-                "Dữ liệu hợp lệ!\n" + str(n_wrn) + " cảnh báo (không chặn import)", 'info')
+            if has_order and has_creator:
+                # Trigger Layer 2 DB pre-scan → fuzzy dialog → enable Import
+                self._set_status("⏳  Đang tra cứu DB...", C["yellow"])
+                self._run_layer2_prescan(n_wrn=n_wrn)
+            else:
+                self._set_status("Validate OK — chọn Đơn hàng & Nhân viên để Import", C["yellow"])
+                self._show_msg("Validate",
+                    "Dữ liệu hợp lệ!\n" + str(n_wrn) + " cảnh báo (không chặn import)\n\n"
+                    "Vui lòng chọn Đơn hàng và Nhân viên để Import.", 'info')
         else:
             self.btn_import.config(state=tk.DISABLED)
             self._set_status(str(n_err) + " lỗi  |  " + str(n_wrn) + " cảnh báo", C["red"])
@@ -7714,6 +7723,149 @@ class BOMToolApp(ctk.CTk):
                     "Import bị khóa cho đến khi sửa hết lỗi.\n\n"
                     "Vui lòng mở file Excel gốc, sửa các dòng bị đánh dấu đỏ,\n"
                     "lưu lại và thực hiện lại từ Bước 1.", 'warning')
+
+    # ── Layer 2 BOM pre-scan (tại Kiểm tra) ──────────────────────────────────
+    def _run_layer2_prescan(self, n_wrn: int = 0):
+        """
+        Chạy DB pre-scan ngay tại Kiểm tra (không chờ đến Import).
+        Giống THDM step ④: thu thập fuzzy → hiện batch dialog → lưu resolutions.
+        Sau khi xong: enable Import + set _bom_layer2_done=True.
+        """
+        self._bom_layer2_done   = False
+        self._fuzzy_collect_mode = True
+        self._fuzzy_pending      = []
+        self._fuzzy_ctx          = {}
+        self._ps_bom_caches      = {}
+
+        dlg = self._make_loading_popup("⏳  Đang tra cứu DB...\nVui lòng chờ.", grab=False)
+        fname = os.path.basename(self._current_file)
+
+        try:
+            conn = self._get_db_conn()
+        except Exception as e:
+            try: dlg.destroy()
+            except Exception: pass
+            self._fuzzy_collect_mode = False
+            self._set_status("❌  Không kết nối được DB", C["red"])
+            self._show_msg("Lỗi kết nối DB", str(e), 'error')
+            return
+
+        def _worker():
+            import math as _math
+            import datetime as _dt
+            try:
+                _now       = _dt.datetime.now()
+                _meta      = self.global_meta
+                _norm_meta = {_norm_vn(k): v for k, v in _meta.items()}
+                _hmap = self.mapping.get('HEADER', [])
+                self._ps_header_caches = self._build_all_caches(conn, _hmap)
+                for _r in _hmap:
+                    if _r.get('nguon_dl') in ('SP', 'TinhToan', 'HeThong', 'CoDinh'):
+                        continue
+                    if _r.get('kieu_lookup', '') not in ('fuzzy_code', 'fuzzy_name'):
+                        continue
+                    self._fuzzy_ctx = {
+                        'section': 'HEADER', 'field': _r.get('sql_col', ''), 'row_idx': None}
+                    self._resolve_header_field(
+                        _r, conn, _meta, _norm_meta, self._ps_header_caches, _now)
+                _PS_SECT = {
+                    s for s, cfg in self.mapping.get('_CONFIG', {}).items()
+                    if cfg.get('parent_section') == 'HEADER'
+                }
+                for _lbl, _tbl in self.tables.items():
+                    _sec = _tbl.get('type')
+                    if _sec not in _PS_SECT:
+                        continue
+                    _df = _tbl.get('df')
+                    if _df is None or _df.empty or 'Lỗi' in _df.columns:
+                        continue
+                    _all_recs = self.mapping.get(_sec, [])
+                    _fuzzy_recs = [
+                        r for r in _all_recs
+                        if _nan_str(r.get('kieu_lookup', '')) in ('fuzzy_code', 'fuzzy_name')
+                        and _nan_str(r.get('nguon_dl', '')) not in ('CoDinh', 'HeThong', 'SP', 'TinhToan')
+                        and _nan_str(r.get('truong_so_sanh', ''))
+                        and _nan_str(r.get('truong_lay_ve', ''))
+                    ]
+                    if not _fuzzy_recs:
+                        continue
+                    _dcaches = self._build_bom_detail_caches(conn, _all_recs)
+                    self._ps_bom_caches[_sec] = _dcaches
+                    _stt_col = next((c for c in _df.columns if _norm_vn(str(c)) == 'stt'), None)
+                    _order = 0
+                    for _, _drow in _df.iterrows():
+                        if _drow.isna().all():
+                            continue
+                        _stt_v = str(_drow.get(_stt_col, '') or '').strip() if _stt_col else ''
+                        if _stt_v and SECTION_STT_PATTERN.match(_stt_v):
+                            continue
+                        _order += 1
+                        for _rec in _fuzzy_recs:
+                            _ten    = _nan_str(_rec.get('ten_excel', ''))
+                            _kl     = _nan_str(_rec.get('kieu_lookup', ''))
+                            _bm     = _nan_str(_rec.get('bang_master', ''))
+                            _dk     = _nan_str(_rec.get('dieu_kien_master', ''))
+                            _ss     = _nan_str(_rec.get('truong_so_sanh', ''))
+                            _lv     = _nan_str(_rec.get('truong_lay_ve', ''))
+                            _scol   = _rec.get('sql_col', '')
+                            _nguong = int(_rec.get('nguong_fuzzy', 0) or 0) or 92
+                            _raw = None
+                            if _ten:
+                                _norm_ten = _norm_vn(_ten)
+                                for _col in _drow.index:
+                                    _cs = str(_col).strip()
+                                    if _cs == _ten or _norm_vn(_cs) == _norm_ten:
+                                        _v = _drow[_col]
+                                        if _v is None or (isinstance(_v, float) and _math.isnan(_v)):
+                                            break
+                                        _raw = _v
+                                        break
+                            if _raw is None:
+                                continue
+                            _cache_key = (_bm, _dk, _ss, _lv)
+                            _cache = _dcaches.get(_cache_key, [])
+                            self._fuzzy_ctx = {
+                                'section': _sec, 'field': _scol, 'row_idx': _order}
+                            self._lookup_generic(_raw, _cache, _kl, _nguong, _cache_key=_cache_key)
+            except Exception as _pe:
+                import traceback as _tb
+                _err_msg = _tb.format_exc()
+                self.after(0, lambda m=_err_msg: self._log(
+                    fname, 'Layer2Prescan', 0, 'Error', m[:500], 'error'))
+            finally:
+                self._fuzzy_collect_mode = False
+                try: conn.close()
+                except Exception: pass
+            self.after(0, _after)
+
+        def _after():
+            try: dlg.destroy()
+            except Exception: pass
+            n_pending = len(self._fuzzy_pending)
+            if self._fuzzy_pending:
+                resolved = self._show_batch_fuzzy_dialog(self._fuzzy_pending)
+                self._fuzzy_resolutions = resolved if resolved is not None else {}
+            else:
+                self._fuzzy_resolutions = {}
+            self._fuzzy_batch_done = True
+            self._bom_layer2_done  = True
+            status_msg = "✅  Validate + DB OK"
+            if n_pending:
+                status_msg += f" — {n_pending} mã fuzzy đã xác nhận"
+            if n_wrn:
+                status_msg += f" — {n_wrn} cảnh báo"
+            self._set_status(status_msg, C["green"])
+            has_order   = bool(self._bom_selected_order_id)
+            has_creator = bool(self._current_creator_user_id)
+            self.btn_import.config(
+                state=tk.NORMAL if (has_order and has_creator) else tk.DISABLED)
+            popup_msg = "Dữ liệu hợp lệ và đã tra cứu DB!\n"
+            if n_pending:
+                popup_msg += f"{n_pending} mã fuzzy đã được xác nhận.\n"
+            popup_msg += str(n_wrn) + " cảnh báo (không chặn import)\n\nNhấn Import để tiếp tục."
+            self._show_msg("Validate + DB OK", popup_msg, 'info')
+
+        threading.Thread(target=_worker, daemon=True).start()
 
     # ── DB helpers ───────────────────────────────────────────────────────────
     def _get_db_conn(self, timeout_sec: int = 5):
@@ -9397,17 +9549,6 @@ class BOMToolApp(ctk.CTk):
 
         conn.autocommit = False
 
-        self._set_status("⏳  Đang phân tích dữ liệu...", C["yellow"])
-        _scan_dlg = self._make_loading_popup(
-            "⏳  Đang phân tích file...\nVui lòng chờ.", grab=False)
-
-        self._fuzzy_collect_mode = True
-        self._fuzzy_pending      = []
-        self._fuzzy_ctx          = {}
-        self._fuzzy_resolutions  = {}
-        self._fuzzy_batch_done   = False
-        self._ps_bom_caches      = {}
-
         def _prescan_worker():
             import math as _math
             import datetime as _dt
@@ -9759,7 +9900,23 @@ class BOMToolApp(ctk.CTk):
             }
             threading.Thread(target=self._run_insert_bg, args=(ctx,), daemon=True).start()
 
-        threading.Thread(target=_prescan_worker, daemon=True).start()
+        if getattr(self, '_bom_layer2_done', False):
+            # Layer 2 đã làm prescan tại Kiểm tra → bỏ qua prescan, đi thẳng vào header resolve
+            self._loading_dlg = self._make_loading_popup(
+                "Đang chuẩn bị dữ liệu...\nVui lòng chờ.", grab=False)
+            threading.Thread(target=_header_resolve_bg, daemon=True).start()
+        else:
+            # Prescan tại Import (flow cũ — khi không qua Kiểm tra trước)
+            self._set_status("⏳  Đang phân tích dữ liệu...", C["yellow"])
+            _scan_dlg = self._make_loading_popup(
+                "⏳  Đang phân tích file...\nVui lòng chờ.", grab=False)
+            self._fuzzy_collect_mode = True
+            self._fuzzy_pending      = []
+            self._fuzzy_ctx          = {}
+            self._fuzzy_resolutions  = {}
+            self._fuzzy_batch_done   = False
+            self._ps_bom_caches      = {}
+            threading.Thread(target=_prescan_worker, daemon=True).start()
 
     def _run_insert_bg(self, ctx):
         """
