@@ -35,6 +35,10 @@ hiddenimports = [
     'math',
     'unicodedata',
     'datetime',
+    # Network (cho auto-update)
+    'urllib', 'urllib.request', 'urllib.parse', 'urllib.error',
+    'http', 'http.client',
+    'ssl', 'email', 'email.message',
 ]
 
 # customtkinter: gồm theme JSON + CTkImage + nội bộ
@@ -79,7 +83,7 @@ a = Analysis(
     excludes=[
         'matplotlib', 'scipy', 'numpy.distutils',
         'unittest', 'doctest',
-        'email', 'http', 'xmlrpc', 'ftplib', 'imaplib', 'poplib',
+        'xmlrpc', 'ftplib', 'imaplib', 'poplib',
         'pydoc', 'nntplib', 'telnetlib',
         'IPython', 'notebook', 'jupyter',
     ],
