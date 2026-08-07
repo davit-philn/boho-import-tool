@@ -917,6 +917,8 @@ class BOMToolApp(ctk.CTk):
             corner_radius=8, height=32)
         self.btn_import.pack(side=tk.LEFT, padx=(0, 4), pady=10)
 
+        self.btn_view_sql = _ab_btn("📋  Xem SQL", self._view_sql_clicked, state="disabled")
+
         self.btn_undo_import = _ab_btn("↩  Hoàn tác import", self._undo_last_import,
                                        state="disabled")
         Tooltip(self.btn_undo_import,
@@ -4770,9 +4772,9 @@ class BOMToolApp(ctk.CTk):
         if self.val_errors is not None:
             n_err, _ = count_errors(self.val_errors)
             has_creator = bool(self._current_creator_user_id)
-            self.btn_import.config(
-                state=tk.NORMAL if n_err == 0 and self._bom_selected_order_id and has_creator
-                else tk.DISABLED)
+            _s = tk.NORMAL if n_err == 0 and self._bom_selected_order_id and has_creator else tk.DISABLED
+            self.btn_import.config(state=_s)
+            self.btn_view_sql.configure(state=_s)
 
     def _bom_try_auto_select_order(self):
         """Khớp 'Đơn hàng' trong Excel header với dropdown.
@@ -7348,7 +7350,9 @@ class BOMToolApp(ctk.CTk):
                 icon = (" E" + str(ne)) if ne else ((" W" + str(nw)) if nw else " OK")
                 self.listbox.insert(tk.END, name + icon)
             self.btn_report.config(state=tk.NORMAL)
-            self.btn_import.config(state=tk.NORMAL if n_err == 0 else tk.DISABLED)
+            _s = tk.NORMAL if n_err == 0 else tk.DISABLED
+            self.btn_import.config(state=_s)
+            self.btn_view_sql.configure(state=_s)
 
         self._toggle_log() if not self._log_expanded else None
         self.btn_open.config(state=tk.NORMAL)
@@ -7653,6 +7657,7 @@ class BOMToolApp(ctk.CTk):
 
         self.btn_validate.config(state=tk.NORMAL)
         self.btn_import.config(state=tk.DISABLED)
+        self.btn_view_sql.configure(state="disabled")
         self.btn_report.config(state=tk.DISABLED)
         self._bom_try_auto_select_order()
 
@@ -7693,6 +7698,7 @@ class BOMToolApp(ctk.CTk):
             has_order   = bool(self._bom_selected_order_id)
             has_creator = bool(self._current_creator_user_id)
             self.btn_import.config(state=tk.DISABLED)
+            self.btn_view_sql.configure(state="disabled")
             self.cmb_order.set_error(not has_order)
             self.cmb_creator.set_error(not has_creator)
             self._log(fname, "Validate", "—", "OK", str(n_wrn) + " canh bao", "ok")
@@ -7707,6 +7713,7 @@ class BOMToolApp(ctk.CTk):
                     "Vui lòng chọn Đơn hàng và Nhân viên để Import.", 'info')
         else:
             self.btn_import.config(state=tk.DISABLED)
+            self.btn_view_sql.configure(state="disabled")
             self._set_status(str(n_err) + " lỗi  |  " + str(n_wrn) + " cảnh báo", C["red"])
             self._log(fname, "Validate", "—", str(n_err) + " loi",
                       str(n_err) + " loi, " + str(n_wrn) + " canh bao", "err")
@@ -7857,8 +7864,9 @@ class BOMToolApp(ctk.CTk):
             self._set_status(status_msg, C["green"])
             has_order   = bool(self._bom_selected_order_id)
             has_creator = bool(self._current_creator_user_id)
-            self.btn_import.config(
-                state=tk.NORMAL if (has_order and has_creator) else tk.DISABLED)
+            _s = tk.NORMAL if (has_order and has_creator) else tk.DISABLED
+            self.btn_import.config(state=_s)
+            self.btn_view_sql.configure(state=_s)
             popup_msg = "Dữ liệu hợp lệ và đã tra cứu DB!\n"
             if n_pending:
                 popup_msg += f"{n_pending} mã fuzzy đã được xác nhận.\n"
@@ -9491,6 +9499,7 @@ class BOMToolApp(ctk.CTk):
             return
         self._import_running = True
         self.btn_import.configure(state="disabled")
+        self.btn_view_sql.configure(state="disabled")
 
         import datetime
         self.mapping = load_mapping()
@@ -9518,6 +9527,7 @@ class BOMToolApp(ctk.CTk):
                 'warning')
             self._import_running = False
             self.btn_import.configure(state="normal")
+            self.btn_view_sql.configure(state="normal")
             return
         if not self._bom_selected_order_id:
             self.cmb_order.set_error(True)
@@ -9527,6 +9537,7 @@ class BOMToolApp(ctk.CTk):
                 'warning')
             self._import_running = False
             self.btn_import.configure(state="normal")
+            self.btn_view_sql.configure(state="normal")
             return
         self.global_meta["Đơn hàng"] = self._bom_selected_order_id
 
@@ -9799,7 +9810,9 @@ class BOMToolApp(ctk.CTk):
                 # U10: clear re-entrancy flag khi abort
                 self._import_running = False
                 _n_err, _ = count_errors(self.val_errors or {})
-                self.btn_import.configure(state="normal" if _n_err == 0 else "disabled")
+                _s = "normal" if _n_err == 0 else "disabled"
+                self.btn_import.configure(state=_s)
+                self.btn_view_sql.configure(state=_s)
                 try:
                     if getattr(self, '_loading_dlg', None):
                         self._loading_dlg.destroy()
@@ -9966,7 +9979,9 @@ class BOMToolApp(ctk.CTk):
         # U10: clear re-entrancy flag and restore btn_import state
         self._import_running = False
         _n_err, _ = count_errors(self.val_errors or {})
-        self.btn_import.configure(state="normal" if _n_err == 0 else "disabled")
+        _s = "normal" if _n_err == 0 else "disabled"
+        self.btn_import.configure(state=_s)
+        self.btn_view_sql.configure(state=_s)
 
         try:
             if self._loading_dlg:
@@ -9993,6 +10008,140 @@ class BOMToolApp(ctk.CTk):
             self._db_log('BOM', fname, '', 0, 'LOI', err)
             self._show_msg("Import thất bại", f"Lỗi: {err}", kind="error")
 
+
+    # ── Xem SQL trước khi import ─────────────────────────────────────────────
+    def _view_sql_clicked(self):
+        """Kích hoạt chế độ export-only rồi chạy _start_import như bình thường."""
+        self.var_export_sql.set(True)
+        self._start_import()
+
+    def _run_export_sql(self, conn, row, cols, sql_stmt, header_map, fname, now):
+        """
+        Được gọi thay cho INSERT khi var_export_sql=True.
+        Build SQL đầy đủ (header + detail), hiện trong dialog, tuỳ chọn lưu file.
+        """
+        import datetime as _dt
+        # Reset flag và trạng thái button
+        self.var_export_sql.set(False)
+        self._import_running = False
+        _n_err, _ = count_errors(self.val_errors or {})
+        _s = "normal" if _n_err == 0 else "disabled"
+        self.btn_import.configure(state=_s)
+        self.btn_view_sql.configure(state=_s)
+
+        try:
+            # ── 1. Build header SQL với giá trị thực (thay ? bằng literals) ──
+            def _lit(v):
+                if v is None:
+                    return 'NULL'
+                if isinstance(v, bool):
+                    return '1' if v else '0'
+                if isinstance(v, _dt.datetime):
+                    return f"'{v.strftime('%Y-%m-%d %H:%M:%S')}'"
+                if isinstance(v, _dt.date):
+                    return f"'{v.strftime('%Y-%m-%d')}'"
+                if isinstance(v, (int, float)):
+                    import math as _m
+                    if isinstance(v, float) and _m.isnan(v):
+                        return 'NULL'
+                    return str(v)
+                s = str(v).replace("'", "''")
+                return f"N'{s}'"
+
+            col_list = ', '.join(f'[{c}]' for c in cols)
+            val_list = ', '.join(_lit(row[c]) for c in cols)
+            table_name = (self.db_cfg.get('table_name', 'B20BOM') if self.db_cfg else 'B20BOM')
+            header_sql = (
+                f"-- ===== HEADER ({table_name}) =====\n"
+                f"INSERT INTO {table_name} ({col_list})\n"
+                f"OUTPUT INSERTED.Id\n"
+                f"VALUES ({val_list});\n"
+            )
+
+            # ── 2. Build detail SQL qua _generate_bom_details export_only ────
+            detail_lines = self._generate_bom_details(
+                conn, bom_id='<BOM_ID>', parent_row=row,
+                tables=self.tables, mapping=self.mapping,
+                now=now, export_only=True)
+        except Exception as e:
+            import traceback as _tb
+            self._show_msg("Lỗi Xem SQL", f"Không build được SQL:\n{_tb.format_exc()[:800]}", 'error')
+            try: conn.close()
+            except Exception: pass
+            return
+        finally:
+            try: conn.close()
+            except Exception: pass
+
+        full_sql = header_sql + "\n" + "".join(detail_lines)
+
+        # ── 3. Hiển thị dialog ────────────────────────────────────────────────
+        dlg = tk.Toplevel(self)
+        dlg.title(f"Xem SQL — {fname}")
+        dlg.geometry("900x620")
+        dlg.resizable(True, True)
+        dlg.transient(self)
+
+        # Toolbar
+        tb = tk.Frame(dlg, bg="#1E1E1E", height=36)
+        tb.pack(fill=tk.X)
+        tb.pack_propagate(False)
+
+        def _copy():
+            dlg.clipboard_clear()
+            dlg.clipboard_append(full_sql)
+            btn_copy.configure(text="✅  Đã copy")
+            dlg.after(1500, lambda: btn_copy.configure(text="📋  Copy SQL"))
+
+        def _save():
+            import tkinter.filedialog as _fd
+            path = _fd.asksaveasfilename(
+                parent=dlg,
+                defaultextension=".sql",
+                initialfile=fname.replace('.xlsm','').replace('.xlsx','') + "_preview.sql",
+                filetypes=[("SQL file", "*.sql"), ("Text file", "*.txt"), ("All", "*.*")])
+            if path:
+                with open(path, 'w', encoding='utf-8') as f:
+                    f.write(full_sql)
+                self._set_status(f"Đã lưu SQL → {path}", C["green"])
+
+        btn_copy = CButton(tb, text="📋  Copy SQL", command=_copy,
+            font=ctk.CTkFont(*FONT_BODY), fg_color="transparent",
+            text_color=("#E1E1E1","#E1E1E1"), hover_color=("#3A3A3A","#3A3A3A"),
+            border_width=0, corner_radius=4, height=28, width=110)
+        btn_copy.pack(side=tk.LEFT, padx=6, pady=4)
+
+        btn_save = CButton(tb, text="💾  Lưu .sql", command=_save,
+            font=ctk.CTkFont(*FONT_BODY), fg_color="transparent",
+            text_color=("#E1E1E1","#E1E1E1"), hover_color=("#3A3A3A","#3A3A3A"),
+            border_width=0, corner_radius=4, height=28, width=100)
+        btn_save.pack(side=tk.LEFT, padx=(0,6), pady=4)
+
+        n_lines = full_sql.count('\n')
+        tk.Label(tb, text=f"{n_lines:,} dòng SQL",
+            bg="#1E1E1E", fg="#888888",
+            font=("Consolas", 9)).pack(side=tk.RIGHT, padx=10)
+
+        # Text area
+        frame = tk.Frame(dlg)
+        frame.pack(fill=tk.BOTH, expand=True)
+        xsb = tk.Scrollbar(frame, orient=tk.HORIZONTAL)
+        ysb = tk.Scrollbar(frame, orient=tk.VERTICAL)
+        txt = tk.Text(frame, wrap=tk.NONE,
+            bg="#1E1E1E", fg="#D4D4D4",
+            font=("Consolas", 10),
+            insertbackground="#D4D4D4",
+            selectbackground="#264F78",
+            xscrollcommand=xsb.set, yscrollcommand=ysb.set,
+            state=tk.NORMAL)
+        xsb.config(command=txt.xview)
+        ysb.config(command=txt.yview)
+        ysb.pack(side=tk.RIGHT, fill=tk.Y)
+        xsb.pack(side=tk.BOTTOM, fill=tk.X)
+        txt.pack(fill=tk.BOTH, expand=True)
+
+        txt.insert(tk.END, full_sql)
+        txt.configure(state=tk.DISABLED)
 
     # ── Hoàn tác import (gọi SP usp_BOMTool_DeleteBOM — khách hàng deploy) ────
     def _undo_last_import(self):
