@@ -157,16 +157,19 @@ def make_portable_zip():
     _ok(f"{PORTABLE_ZIP}  ({size_mb:.1f} MB, {total_files} files)")
 
 
-# ── Bước 3b: Copy version.json + sync CURRENT_VERSION trong updater.py ────────
-def sync_version():
-    _banner("[3b] Sync version.json → dist + updater.py")
+# ── Bước 0: Patch version trong SOURCE trước khi PyInstaller compile ──────────
+def patch_source_versions():
+    """
+    Patch version strings trong source files TRƯỚC khi PyInstaller chạy.
+    Đảm bảo EXE được compile với đúng VERSION, CURRENT_VERSION, APP_VERSION.
+    """
+    _banner("[0/4] Patch version trong source files")
     import re as _re
+    import datetime as _dt
 
-    # 1) Copy version.json từ repo root vào dist (kế bên EXE)
+    # 1) version.json ở repo root
     vj_src = os.path.join(os.path.dirname(__file__), "..", "version.json")
-    vj_dst = os.path.join(DIST_APP_DIR, "version.json")
     if os.path.exists(vj_src):
-        # Update version + download_url trong file trước khi copy
         with open(vj_src, encoding="utf-8") as f:
             vj = json.load(f)
         vj["version"] = VERSION
@@ -174,25 +177,19 @@ def sync_version():
             f"https://github.com/davit-philn/boho-import-tool/"
             f"releases/download/v{VERSION}/{APP_NAME}_v{VERSION}_Portable.zip"
         )
-        import datetime as _dt
         vj["release_date"] = _dt.date.today().isoformat()
         with open(vj_src, "w", encoding="utf-8") as f:
             json.dump(vj, f, ensure_ascii=False, indent=4)
-        shutil.copy2(vj_src, vj_dst)
-        _ok(f"version.json → {vj_dst}  (v{VERSION})")
+        _ok(f"version.json: version = \"{VERSION}\"")
     else:
-        _warn("Không tìm thấy version.json ở repo root — bỏ qua.")
+        _warn("Không tìm thấy version.json ở repo root.")
 
-    # 2) Patch CURRENT_VERSION trong services/updater.py
+    # 2) services/updater.py — CURRENT_VERSION
     updater_path = os.path.join("services", "updater.py")
     if os.path.exists(updater_path):
         with open(updater_path, encoding="utf-8") as f:
             src = f.read()
-        new_src = _re.sub(
-            r'(CURRENT_VERSION\s*=\s*")[^"]*(")',
-            rf'\g<1>{VERSION}\g<2>',
-            src,
-        )
+        new_src = _re.sub(r'(CURRENT_VERSION\s*=\s*")[^"]*(")', rf'\g<1>{VERSION}\g<2>', src)
         if new_src != src:
             with open(updater_path, "w", encoding="utf-8") as f:
                 f.write(new_src)
@@ -200,16 +197,12 @@ def sync_version():
         else:
             _info("updater.py: CURRENT_VERSION đã đúng.")
 
-    # 3) Patch APP_VERSION trong services/utils.py (hiển thị trên title bar)
+    # 3) services/utils.py — APP_VERSION (hiển thị trên title bar / splash)
     utils_path = os.path.join("services", "utils.py")
     if os.path.exists(utils_path):
         with open(utils_path, encoding="utf-8") as f:
             src = f.read()
-        new_src = _re.sub(
-            r'(APP_VERSION\s*=\s*")[^"]*(")',
-            rf'\g<1>{VERSION}\g<2>',
-            src,
-        )
+        new_src = _re.sub(r'(APP_VERSION\s*=\s*")[^"]*(")', rf'\g<1>{VERSION}\g<2>', src)
         if new_src != src:
             with open(utils_path, "w", encoding="utf-8") as f:
                 f.write(new_src)
@@ -217,22 +210,28 @@ def sync_version():
         else:
             _info("utils.py: APP_VERSION đã đúng.")
 
-    # 4) Patch AppVersion trong setup.iss (Inno Setup installer)
+    # 4) setup.iss — AppVersion
     iss_path = "setup.iss"
     if os.path.exists(iss_path):
         with open(iss_path, encoding="utf-8") as f:
             src = f.read()
-        new_src = _re.sub(
-            r'(#define AppVersion\s+")[^"]*(")',
-            rf'\g<1>{VERSION}\g<2>',
-            src,
-        )
+        new_src = _re.sub(r'(#define AppVersion\s+")[^"]*(")', rf'\g<1>{VERSION}\g<2>', src)
         if new_src != src:
             with open(iss_path, "w", encoding="utf-8") as f:
                 f.write(new_src)
             _ok(f"setup.iss: AppVersion = \"{VERSION}\"")
+
+
+# ── Bước 3b: Copy version.json vào dist/ (SAU khi PyInstaller build xong) ────
+def copy_version_json_to_dist():
+    _banner("[3b] Copy version.json → dist/")
+    vj_src = os.path.join(os.path.dirname(__file__), "..", "version.json")
+    vj_dst = os.path.join(DIST_APP_DIR, "version.json")
+    if os.path.exists(vj_src):
+        shutil.copy2(vj_src, vj_dst)
+        _ok(f"version.json → {vj_dst}  (v{VERSION})")
     else:
-        _warn("Không tìm thấy services/updater.py — bỏ qua.")
+        _warn("Không tìm thấy version.json ở repo root — bỏ qua.")
 
 
 # ── Bước 4: Inno Setup Installer (tùy chọn) ──────────────────────────────────
@@ -277,9 +276,10 @@ if __name__ == "__main__":
     print(f"  Python {sys.version.split()[0]} | PyInstaller onedir")
     print(f"{'='*60}")
 
+    patch_source_versions()        # Patch source TRƯỚC — EXE sẽ compile đúng version
     run_pyinstaller(debug=args.debug)
     copy_config()
-    sync_version()
+    copy_version_json_to_dist()    # Copy version.json vào dist SAU khi build xong
     if not args.debug:
         make_portable_zip()
         run_inno_setup()
