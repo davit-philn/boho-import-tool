@@ -96,6 +96,7 @@ def _load_section_rows(xl, sheet_name, section):
             "truong_lay_ve":    _nan_str(row.get("Truong_Lay_Ve")),
             "ghi_chu":          _nan_str(row.get("Ghi_chu")),
             "fill_forward":     "1" if str(_nan_str(row.get("Fill_Forward"))).split('.')[0] == '1' else "",
+            "bien_doi":         _nan_str(row.get("Bien_Doi")),
         })
     return records
 

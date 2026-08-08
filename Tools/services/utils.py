@@ -8,7 +8,7 @@ import unicodedata
 import datetime
 import math
 
-APP_VERSION = "2.2"
+APP_VERSION = "2.2.1"
 
 # Tên 3 tab chính — nguồn duy nhất, dùng ở mọi chỗ thay vì literal string /
 # substring match. Trước đây _on_tab_changed() check `"THDM" in tab_name`,
@@ -131,13 +131,13 @@ def guess_col_align(col_name: str) -> str:
 
     return 'w'
 
-# Cột mapping chuẩn (14 cột, không có STT)
+# Cột mapping chuẩn (15 cột, không có STT)
 _MAPPING_ENG_COLS = [
     "SQL_Column", "Ten_Excel", "Kieu_DL", "Do_dai",
     "Bat_buoc", "Mac_dinh", "Nguon_DL",
     "Bang_Master", "Dieu_kien_Master", "Kieu_Lookup",
     "Truong_So_Sanh", "Truong_Lay_Ve", "Ghi_chu",
-    "Fill_Forward",
+    "Fill_Forward", "Bien_Doi",
 ]
 # HEADER/DETAIL sheet có thêm cột Section ở đầu (15 cột)
 _SECTION_ENG_COLS = ["Section"] + _MAPPING_ENG_COLS

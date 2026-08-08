@@ -1280,6 +1280,14 @@ def _resolve_row_mapping(mapping_recs, ctx, get_excel_val=None):
                         except (ValueError, TypeError):
                             try:    val = float(mac)
                             except (ValueError, TypeError): val = mac
+                if val is not None and isinstance(val, str):
+                    bien_doi = (rec.get('bien_doi') or '').strip().upper()
+                    if bien_doi == 'UPPER':
+                        val = val.upper()
+                    elif bien_doi == 'LOWER':
+                        val = val.lower()
+                    elif bien_doi == 'TRIM':
+                        val = val.strip()
                 row_out[sql_col] = val
             continue
 
