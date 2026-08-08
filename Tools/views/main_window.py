@@ -188,67 +188,88 @@ class BOMToolApp(ctk.CTk):
         _updater.check_update_async(_cb)
 
     def _on_update_found(self, info: dict):
-        """Hiện nút update khi phát hiện bản mới."""
+        """Popup bắt buộc cập nhật — chặn toàn bộ UI, không thể đóng."""
         self._update_info = info
-        ver = info.get("version", "?")
-        self._btn_update.configure(text=f"🔔  Có bản v{ver} — Nhấn để tải")
-        self._btn_update.pack(side=tk.LEFT, padx=(8, 0))
+        ver   = info.get("version", "?")
+        url   = info.get("download_url", "")
+        notes = info.get("release_notes", "") or "Vui lòng cập nhật để tiếp tục sử dụng."
+
+        is_dark = ctk.get_appearance_mode() == "Dark"
+        bg  = "#1E1E1E" if is_dark else "#F5F5F5"
+        fg  = "#E8E8E8" if is_dark else "#1A1A1A"
+        fg2 = "#8A8A8A" if is_dark else "#666666"
+
+        dlg = tk.Toplevel(self)
+        dlg.title("")
+        dlg.resizable(False, False)
+        dlg.transient(self)
+        dlg.grab_set()
+        dlg.protocol("WM_DELETE_WINDOW", lambda: None)   # Không cho đóng
+        dlg.configure(bg=bg)
+
+        W, H = 440, 310
+        dlg.update_idletasks()
+        sw = self.winfo_screenwidth()
+        sh = self.winfo_screenheight()
+        dlg.geometry(f"{W}x{H}+{(sw - W)//2}+{(sh - H)//2}")
+
+        tk.Label(dlg, text="🔔", font=("Segoe UI", 36), bg=bg, fg=fg).pack(pady=(28, 4))
+        tk.Label(dlg, text=f"Có phiên bản mới  v{ver}",
+                 font=("Segoe UI", 14, "bold"), bg=bg, fg=fg).pack()
+        tk.Label(dlg, text=notes, font=("Segoe UI", 10),
+                 bg=bg, fg=fg2, wraplength=380, justify="center").pack(pady=(6, 14))
+
+        lbl_status = tk.Label(dlg, text="", font=("Segoe UI", 10), bg=bg, fg="#4FC3F7")
+        lbl_status.pack()
+
+        pbar = ttk.Progressbar(dlg, length=360, mode="determinate", maximum=100)
+        pbar.pack(pady=(4, 18))
+
+        btn = CButton(dlg, text="⬇  Cập nhật ngay", width=200, height=38,
+                      font=ctk.CTkFont("Segoe UI", 13, "bold"), corner_radius=8)
+        btn.pack()
+
+        def _start():
+            if not url:
+                lbl_status.configure(text="Không tìm thấy link tải. Liên hệ quản trị.")
+                return
+            btn.configure(state="disabled", text="⏳  Đang tải...")
+
+            def _progress(dl, total):
+                if total > 0:
+                    pct = int(dl * 100 / total)
+                    def _upd(p=pct):
+                        pbar.configure(value=p)
+                        lbl_status.configure(text=f"Đang tải...  {p}%")
+                    dlg.after(0, _upd)
+
+            def _worker():
+                try:
+                    zip_path = _updater.download_update(url, _progress)
+                    dlg.after(0, lambda z=zip_path: _apply(z))
+                except Exception:
+                    dlg.after(0, lambda: (
+                        btn.configure(state="normal", text="❌  Tải thất bại — Thử lại"),
+                        lbl_status.configure(text="Lỗi khi tải. Kiểm tra kết nối mạng."),
+                    ))
+
+            threading.Thread(target=_worker, daemon=True).start()
+
+        def _apply(zip_path):
+            pbar.configure(value=100)
+            lbl_status.configure(text="Đang áp dụng bản cập nhật — ứng dụng sẽ tự khởi động lại...")
+            btn.configure(state="disabled", text="⏳  Đang áp dụng...")
+            dlg.after(800, lambda: _updater.apply_update(zip_path))
+
+        btn.configure(command=_start)
 
     def _on_update_btn_click(self):
-        """Xử lý click nút update: tải ngầm → khi xong đổi sang nút Restart."""
-        if self._update_zip:
-            # ZIP đã tải xong → apply
-            if messagebox.askyesno(
-                "Cập nhật",
-                "Ứng dụng sẽ tắt để áp dụng bản mới.\n\n"
-                "⏱  Quá trình mất khoảng 10–15 giây.\n"
-                "Ứng dụng sẽ tự động mở lại — vui lòng đợi thông báo ở góc màn hình.\n\n"
-                "Tiếp tục?",
-                parent=self,
-            ):
-                _updater.apply_update(self._update_zip)
-            return
-
-        if not self._update_info:
-            return
-
-        url = self._update_info.get("download_url", "")
-        if not url:
-            return
-
-        ver = self._update_info.get("version", "?")
-        self._btn_update.configure(
-            text=f"⏳  Đang tải v{ver}... 0%",
-            state="disabled",
-        )
-
-        def _progress(downloaded, total):
-            if total > 0:
-                pct = int(downloaded * 100 / total)
-                self.after(0, lambda p=pct: self._btn_update.configure(
-                    text=f"⏳  Đang tải v{ver}... {p}%"))
-
-        def _download_worker():
-            try:
-                zip_path = _updater.download_update(url, _progress)
-                self.after(0, lambda z=zip_path: self._on_download_done(z, ver))
-            except Exception as e:
-                self.after(0, lambda: self._btn_update.configure(
-                    text=f"❌  Tải thất bại — thử lại",
-                    state="normal",
-                ))
-
-        threading.Thread(target=_download_worker, daemon=True).start()
+        """Giữ lại để không lỗi — flow cập nhật nay dùng popup bắt buộc."""
+        pass
 
     def _on_download_done(self, zip_path: str, ver: str):
-        """Khi tải ZIP xong → đổi nút thành Restart."""
-        self._update_zip = zip_path
-        self._btn_update.configure(
-            text=f"✅  v{ver} sẵn sàng — Khởi động lại",
-            state="normal",
-            fg_color=("#D97706","#D97706"),
-            hover_color=("#B45309","#B45309"),
-        )
+        """Giữ lại để không lỗi — không còn dùng trong flow mới."""
+        pass
 
     # ── CTk appearance callbacks (từ sidebar OptionMenu) ──────────────────────
     def _setup_scrollbar_style(self):
@@ -1008,6 +1029,7 @@ class BOMToolApp(ctk.CTk):
         self.btn_import.pack(side=tk.LEFT, padx=(0, 4), pady=10)
 
         self.btn_view_sql = _ab_btn("📋  Xem SQL", self._view_sql_clicked, state="disabled")
+        self.btn_view_sql.pack_forget()
 
         self.btn_undo_import = _ab_btn("↩  Hoàn tác import", self._undo_last_import,
                                        state="disabled")
