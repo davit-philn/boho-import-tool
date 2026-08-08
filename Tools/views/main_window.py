@@ -560,6 +560,26 @@ class BOMToolApp(ctk.CTk):
         except Exception:
             pass
 
+        # Cập nhật evenrow BOM treeview + empty-state labels theo theme
+        try:
+            self.tree.tag_configure("evenrow", background=t["bg_panel"])
+        except Exception:
+            pass
+        _bg = t["sheet_table_bg"]
+        _fg = t["text_muted"]
+        for _lbl in ("_empty_lbl_icon", "_empty_lbl_main", "_empty_lbl_hint"):
+            _w = getattr(self, _lbl, None)
+            if _w:
+                try:
+                    _w.configure(bg=_bg, fg=_fg)
+                except Exception:
+                    pass
+        if getattr(self, "_empty_frame", None):
+            try:
+                self._empty_frame.configure(bg=_bg)
+            except Exception:
+                pass
+
         # 8. Force Tk repaint để CTk widgets hiển thị ngay màu mới
         self.update_idletasks()
 
@@ -1152,16 +1172,17 @@ class BOMToolApp(ctk.CTk):
         # sub-frame chứa nội dung, căn giữa bên trong _empty_frame
         _ec = tk.Frame(self._empty_frame, bg=_EMPTY_BG)
         _ec.place(relx=0.5, rely=0.45, anchor="center")
-        tk.Label(_ec, text="📂", bg=_EMPTY_BG, fg="#3E3E42",
-                 font=FONT_HERO).pack()
-        tk.Label(_ec,
+        self._empty_lbl_icon = tk.Label(_ec, text="📂", bg=_EMPTY_BG,
+                 fg=dt["text_muted"], font=FONT_HERO)
+        self._empty_lbl_icon.pack()
+        self._empty_lbl_main = tk.Label(_ec,
                  text="①  Chọn file Excel ở sidebar để bắt đầu",
-                 bg=_EMPTY_BG, fg="#555555",
-                 font=FONT_LABEL_N).pack(pady=(4, 0))
-        tk.Label(_ec,
+                 bg=_EMPTY_BG, fg=dt["text_muted"], font=FONT_LABEL_N)
+        self._empty_lbl_main.pack(pady=(4, 0))
+        self._empty_lbl_hint = tk.Label(_ec,
                  text="Chọn Nhân viên  →  ②  Kiểm tra  →  ③  Import vào BRAVO",
-                 bg=_EMPTY_BG, fg="#3E3E42",
-                 font=FONT_BODY).pack(pady=(2, 0))
+                 bg=_EMPTY_BG, fg=dt["text_muted"], font=FONT_BODY)
+        self._empty_lbl_hint.pack(pady=(2, 0))
 
         tf = self._tf_outer
         if _HAS_TKSHEET:
@@ -1190,7 +1211,7 @@ class BOMToolApp(ctk.CTk):
             background=C["field_row_bg"], foreground=C["field_row_fg"],
             font=FONT_MD)
         self.tree.tag_configure("oddrow",  background=dt["bg_main"])
-        self.tree.tag_configure("evenrow", background="#2A2D2E")
+        self.tree.tag_configure("evenrow", background=dt["bg_panel"])
         self.tree.tag_configure("err_row",  background=C["badge_err_bg"])
         self.tree.tag_configure("warn_row", background=C["badge_warn_bg"])
         # Căn giữa riêng hàng phụ SQL (giống THDM); dữ liệu vẫn căn trái
@@ -1477,11 +1498,11 @@ class BOMToolApp(ctk.CTk):
 
         total = len(records)
         self._map_info_lbl.config(
-            text=("Section: " + section + "  |  Tong: " + str(total) + " cot"
+            text=("Section: " + section + "  |  Tổng: " + str(total) + " cột"
                   + "  |  OK: " + str(n_ok)
-                  + "  |  Thieu info: " + str(n_miss)
-                  + "  |  Can xac nhan: " + str(n_conf)
-                  + "  |  System: " + str(n_sys)))
+                  + "  |  Thiếu info: " + str(n_miss)
+                  + "  |  Cần xác nhận: " + str(n_conf)
+                  + "  |  Hệ thống: " + str(n_sys)))
 
     # ─ Tab 3: Tra cứu Danh mục ──────────────────────────────────────────────────────
     def _build_tab_catalog(self):
