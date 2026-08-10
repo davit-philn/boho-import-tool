@@ -750,7 +750,11 @@ def parse_bom_file(filepath, meta_keys=None, _decrypted_bytes=None):
         res = _parse_sheet(wb[name], name, live_meta_rows=live_meta_rows, meta_keys=meta_keys, hidden_rows=_hidden_rows_map.get(name), hidden_cols=_hidden_cols_map.get(name), sheet_config=sheet_cfg)
         if res:
             parsed.append(res)
-            global_meta.update(res["metadata"])
+            # first-wins: sheet đầu tiên set giá trị, sheet sau không ghi đè
+            # Tránh BOM_Phan V (section count 14) ghi đè Số lượng SP từ BOM_Phan II (1)
+            for _k, _v in res["metadata"].items():
+                if _k not in global_meta:
+                    global_meta[_k] = _v
         else:
             skipped.append(name)
 

@@ -580,6 +580,25 @@ class BOMToolApp(ctk.CTk):
             except Exception:
                 pass
 
+        # Catalog import empty state
+        for _lbl in ("_cat_import_empty_lbl_icon", "_cat_import_empty_lbl_main",
+                     "_cat_import_empty_lbl_hint"):
+            _w = getattr(self, _lbl, None)
+            if _w:
+                try: _w.configure(bg=_bg, fg=_fg)
+                except Exception: pass
+        if getattr(self, "_cat_import_empty_frame", None):
+            try: self._cat_import_empty_frame.configure(bg=_bg)
+            except Exception: pass
+
+        # THDM empty state labels
+        for _lbl in ("_thdm_empty_lbl_icon", "_thdm_empty_lbl_main",
+                     "_thdm_empty_lbl_hint1", "_thdm_empty_lbl_hint2"):
+            _w = getattr(self, _lbl, None)
+            if _w:
+                try: _w.configure(fg=_fg)
+                except Exception: pass
+
         # 8. Force Tk repaint để CTk widgets hiển thị ngay màu mới
         self.update_idletasks()
 
@@ -1049,7 +1068,6 @@ class BOMToolApp(ctk.CTk):
         self.btn_import.pack(side=tk.LEFT, padx=(0, 4), pady=10)
 
         self.btn_view_sql = _ab_btn("📋  Xem SQL", self._view_sql_clicked, state="disabled")
-        self.btn_view_sql.pack_forget()
 
         self.btn_undo_import = _ab_btn("↩  Hoàn tác import", self._undo_last_import,
                                        state="disabled")
@@ -1656,6 +1674,7 @@ class BOMToolApp(ctk.CTk):
 
     def _setup_catalog_import_tab(self, tab):
         """Sub-tab 2: Template selector, chọn file Excel, SheetTable preview editable, Import."""
+        dt = THEMES[ctk.get_appearance_mode()]
         bar = ctk.CTkFrame(tab, fg_color=("gray88","gray16"), height=48, corner_radius=0)
         bar.pack(fill=tk.X)
         bar.pack_propagate(False)
@@ -1752,6 +1771,25 @@ class BOMToolApp(ctk.CTk):
                 text="⚠️  tksheet chưa được cài — không thể hiển thị preview.",
                 font=ctk.CTkFont(*FONT_BODY),
                 fg_color="transparent").pack(expand=True)
+
+        # Empty state overlay — hiện khi chưa chọn file, bị che khi file đã load
+        _ci_bg = dt["sheet_table_bg"]
+        self._cat_import_empty_frame = tk.Frame(content_card, bg=_ci_bg)
+        self._cat_import_empty_frame.place(x=0, y=0, relwidth=1, relheight=1)
+        _cie = tk.Frame(self._cat_import_empty_frame, bg=_ci_bg)
+        _cie.place(relx=0.5, rely=0.45, anchor="center")
+        self._cat_import_empty_lbl_icon = tk.Label(_cie, text="📥",
+            bg=_ci_bg, fg=dt["text_muted"], font=FONT_HERO)
+        self._cat_import_empty_lbl_icon.pack()
+        self._cat_import_empty_lbl_main = tk.Label(_cie,
+            text="①  Chọn Template NVL  →  ②  Chọn file Excel",
+            bg=_ci_bg, fg=dt["text_muted"], font=FONT_LABEL_N)
+        self._cat_import_empty_lbl_main.pack(pady=(4, 0))
+        self._cat_import_empty_lbl_hint = tk.Label(_cie,
+            text="③  Bấm Import",
+            bg=_ci_bg, fg=dt["text_muted"], font=FONT_BODY)
+        self._cat_import_empty_lbl_hint.pack(pady=(2, 0))
+        self._cat_import_empty_frame.lift()
 
     # ── Catalog helper methods ──────────────────────────────────────────────────────────────────
 
@@ -3153,6 +3191,8 @@ class BOMToolApp(ctk.CTk):
         if not path:
             return
         self._catalog_import_filepath = path
+        if hasattr(self, '_cat_import_empty_frame'):
+            self._cat_import_empty_frame.place_forget()
         import os as _os
         short_name = _os.path.basename(path)
         try:
@@ -3997,8 +4037,8 @@ class BOMToolApp(ctk.CTk):
 
         # ── Main area: PanedWindow kéo-thả điều chỉnh tỉ lệ trái/phải ──────
         main = tk.PanedWindow(tab, orient=tk.HORIZONTAL,
-                              bg=dt["border"], bd=0,
-                              sashwidth=5, sashrelief="flat",
+                              bg=dt["bg_deep"], bd=0,
+                              sashwidth=2, sashrelief="flat",
                               opaqueresize=True)
         main.pack(fill=tk.BOTH, expand=True)
 
@@ -4421,14 +4461,21 @@ class BOMToolApp(ctk.CTk):
         self._thdm_result_frame.grid_remove()
         _ef = tk.Frame(ca, bg=dt["bg_main"])
         _ef.place(relx=0.5, rely=0.45, anchor="center")
-        tk.Label(_ef, text="📋", bg=dt["bg_main"], fg="#3E3E42",
-                 font=FONT_HERO).pack()
-        tk.Label(_ef, text="①  Tải dữ liệu và chọn Dự án / Đơn hàng / Nhân viên / Đợt",
-                 bg=dt["bg_main"], fg="#555555", font=FONT_LABEL_N).pack(pady=(4, 0))
-        tk.Label(_ef, text="Tick chọn BOM ở danh sách bên trái  →  ②  Chọn file Excel THDM",
-                 bg=dt["bg_main"], fg="#3E3E42", font=FONT_BODY).pack(pady=(2, 0))
-        tk.Label(_ef, text="③ Tổng hợp  →  ④ Kiểm tra  →  ⑤ Tạo THDM",
-                 bg=dt["bg_main"], fg="#3E3E42", font=FONT_BODY).pack(pady=(2, 0))
+        self._thdm_empty_lbl_icon = tk.Label(_ef, text="📋", bg=dt["bg_main"],
+            fg=dt["text_muted"], font=FONT_HERO)
+        self._thdm_empty_lbl_icon.pack()
+        self._thdm_empty_lbl_main = tk.Label(_ef,
+            text="①  Tải dữ liệu và chọn Dự án / Đơn hàng / Nhân viên / Đợt",
+            bg=dt["bg_main"], fg=dt["text_muted"], font=FONT_LABEL_N)
+        self._thdm_empty_lbl_main.pack(pady=(4, 0))
+        self._thdm_empty_lbl_hint1 = tk.Label(_ef,
+            text="Tick chọn BOM ở danh sách bên trái  →  ②  Chọn file Excel THDM",
+            bg=dt["bg_main"], fg=dt["text_muted"], font=FONT_BODY)
+        self._thdm_empty_lbl_hint1.pack(pady=(2, 0))
+        self._thdm_empty_lbl_hint2 = tk.Label(_ef,
+            text="③ Tổng hợp  →  ④ Kiểm tra  →  ⑤ Tạo THDM",
+            bg=dt["bg_main"], fg=dt["text_muted"], font=FONT_BODY)
+        self._thdm_empty_lbl_hint2.pack(pady=(2, 0))
         self._thdm_empty_frame = _ef
 
         # Internal state
