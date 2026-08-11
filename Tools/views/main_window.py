@@ -8543,90 +8543,70 @@ class BOMToolApp(ctk.CTk):
                 return [str(v or '').strip() for v in e['ss_list']]
             return [str(e.get('ss') or '').strip()]
 
-        # ── Tier 1: exact — collect ALL matches, không trả về sớm ──────────
-        _exact_hits = []
+        # ── Tier 1: exact — so sánh từng field theo thứ tự ──────────────────
         for e in cache:
             for sv in _ss_vals(e):
                 if sv == val_str:
-                    _exact_hits.append(e)
-                    break
-        if _exact_hits:
-            if len(_exact_hits) == 1 or kieu_lookup in ('exact', 'exact_code', 'exact_name', 'validate_only'):
-                return _exact_hits[0]['lv'], 'exact'
-            # Nhiều item trùng tên trong fuzzy mode → cần user chọn
-            _pre_scored = [(100.0, e) for e in _exact_hits]
-        else:
-            _pre_scored = None
+                    return e['lv'], 'exact'
 
-        # ── Tier 2: normalize — tương tự ────────────────────────────────────
-        if _pre_scored is None:
-            _norm_hits = []
-            for e in cache:
-                for sv in _ss_vals(e):
-                    if self._norm_for_match(sv) == norm_val:
-                        _norm_hits.append(e)
-                        break
-            if _norm_hits:
-                if len(_norm_hits) == 1 or kieu_lookup in ('exact', 'exact_code', 'exact_name', 'validate_only'):
-                    return _norm_hits[0]['lv'], 'normalize'
-                # Nhiều match sau normalize → cần user chọn
-                _pre_scored = [(100.0, e) for e in _norm_hits]
+        # ── Tier 2: normalize — tương tự, theo thứ tự ───────────────────────
+        for e in cache:
+            for sv in _ss_vals(e):
+                if self._norm_for_match(sv) == norm_val:
+                    return e['lv'], 'normalize'
 
         # validate_only: check tồn tại → giữ value gốc nếu không tìm thấy
-        if _pre_scored is None and kieu_lookup == 'validate_only':
+        if kieu_lookup == 'validate_only':
             return val_str, 'not_found'
 
         # exact (không fuzzy): dừng ở đây
-        if _pre_scored is None and kieu_lookup in ('exact', 'exact_code', 'exact_name'):
+        if kieu_lookup in ('exact', 'exact_code', 'exact_name'):
             return None, 'none'
 
         # ── Tier 3: fuzzy — score max trên tất cả ss fields ─────────────────
-        if _pre_scored is None:
-            try:
-                from rapidfuzz import fuzz as _fuzz
-            except ImportError:
-                return None, 'none'
+        try:
+            from rapidfuzz import fuzz as _fuzz
+        except ImportError:
+            return None, 'none'
 
-            def _score_entry(e):
-                """Tính fuzzy score tốt nhất trên toàn bộ ss_list."""
-                best = 0.0
-                for sv in _ss_vals(e):
-                    cv_norm = self._norm_for_match(sv)
-                    if not cv_norm:
-                        continue
-                    _lp = (min(len(norm_val), len(cv_norm))
-                           / max(len(norm_val), len(cv_norm), 1))
-                    if kieu_lookup == 'fuzzy_name':
-                        # sqrt(_lp) thay vì _lp: giảm deflation khi hai chuỗi khác độ dài nhiều
-                        s = max(_fuzz.partial_ratio(norm_val, cv_norm) * (_lp ** 0.5),
-                                _fuzz.ratio(norm_val, cv_norm))
-                        # contains → floor 75: vào popup nhưng không bao giờ auto-map
-                        if cv_norm and (norm_val in cv_norm or cv_norm in norm_val):
-                            s = max(s, 75.0)
-                    else:   # fuzzy_code (default)
-                        s = max(_fuzz.ratio(norm_val, cv_norm),
-                                _fuzz.partial_ratio(norm_val, cv_norm) * _lp)
-                    if s > best:
-                        best = s
-                return best
+        def _score_entry(e):
+            """Tính fuzzy score tốt nhất trên toàn bộ ss_list."""
+            best = 0.0
+            for sv in _ss_vals(e):
+                cv_norm = self._norm_for_match(sv)
+                if not cv_norm:
+                    continue
+                _lp = (min(len(norm_val), len(cv_norm))
+                       / max(len(norm_val), len(cv_norm), 1))
+                if kieu_lookup == 'fuzzy_name':
+                    # sqrt(_lp) thay vì _lp: giảm deflation khi hai chuỗi khác độ dài nhiều
+                    s = max(_fuzz.partial_ratio(norm_val, cv_norm) * (_lp ** 0.5),
+                            _fuzz.ratio(norm_val, cv_norm))
+                    # contains → floor 75: vào popup nhưng không bao giờ auto-map
+                    if cv_norm and (norm_val in cv_norm or cv_norm in norm_val):
+                        s = max(s, 75.0)
+                else:   # fuzzy_code (default)
+                    s = max(_fuzz.ratio(norm_val, cv_norm),
+                            _fuzz.partial_ratio(norm_val, cv_norm) * _lp)
+                if s > best:
+                    best = s
+            return best
 
-            _min_score = 20 if kieu_lookup == 'fuzzy_name' else 40
-            scored = [(s, e) for e in cache
-                      if (s := _score_entry(e)) >= _min_score]
+        _min_score = 20 if kieu_lookup == 'fuzzy_name' else 40
+        scored = [(s, e) for e in cache
+                  if (s := _score_entry(e)) >= _min_score]
 
-            if not scored:
-                return None, 'none'
+        if not scored:
+            return None, 'none'
 
-            scored.sort(key=lambda x: -x[0])
-        else:
-            scored = _pre_scored
+        scored.sort(key=lambda x: -x[0])
 
         # Popup cho user chọn (top 3)
         candidates = [
             (s, {
                 'id'  : e['lv'],
                 'code': _ss_vals(e)[0],
-                'name': str(e.get('dn') or e.get('ht') or _ss_vals(e)[0] or ''),
+                'name': str(e.get('ht') or _ss_vals(e)[0] or ''),
             })
             for s, e in scored[:3]
         ]

@@ -27,7 +27,7 @@ if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
 
 # ── Cấu hình ─────────────────────────────────────────────────────────────────
 APP_NAME     = "BOHO_IMPORT_BOM_THDM"
-VERSION      = "2.2.4"
+VERSION      = "2.2.5"
 SPEC_FILE    = "BOHO_IMPORT_BOM_THDM.spec"
 DIST_APP_DIR = os.path.join("dist", APP_NAME)
 OUTPUT_DIR   = "installer_output"
