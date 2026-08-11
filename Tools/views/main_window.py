@@ -212,6 +212,8 @@ class BOMToolApp(ctk.CTk):
         sw = self.winfo_screenwidth()
         sh = self.winfo_screenheight()
         dlg.geometry(f"{W}x{H}+{(sw - W)//2}+{(sh - H)//2}")
+        dlg.lift()
+        dlg.focus_force()
 
         tk.Label(dlg, text="🔔", font=("Segoe UI", 36), bg=bg, fg=fg).pack(pady=(28, 4))
         tk.Label(dlg, text=f"Có phiên bản mới  v{ver}",
@@ -8483,7 +8485,8 @@ class BOMToolApp(ctk.CTk):
                 {
                     'ss_list': [r[i] for i in range(n)],
                     'lv'     : r[n],
-                    'ht'     : r[0],   # field đầu tiên dùng làm display
+                    'ht'     : r[0],          # field đầu tiên dùng làm display
+                    'dn'     : r[1] if n > 1 else r[0],  # field thứ 2 làm tên hiển thị
                 }
                 for r in rows
             ]
@@ -8540,70 +8543,90 @@ class BOMToolApp(ctk.CTk):
                 return [str(v or '').strip() for v in e['ss_list']]
             return [str(e.get('ss') or '').strip()]
 
-        # ── Tier 1: exact — so sánh từng field theo thứ tự ──────────────────
+        # ── Tier 1: exact — collect ALL matches, không trả về sớm ──────────
+        _exact_hits = []
         for e in cache:
             for sv in _ss_vals(e):
                 if sv == val_str:
-                    return e['lv'], 'exact'
+                    _exact_hits.append(e)
+                    break
+        if _exact_hits:
+            if len(_exact_hits) == 1 or kieu_lookup in ('exact', 'exact_code', 'exact_name', 'validate_only'):
+                return _exact_hits[0]['lv'], 'exact'
+            # Nhiều item trùng tên trong fuzzy mode → cần user chọn
+            _pre_scored = [(100.0, e) for e in _exact_hits]
+        else:
+            _pre_scored = None
 
-        # ── Tier 2: normalize — tương tự, theo thứ tự ───────────────────────
-        for e in cache:
-            for sv in _ss_vals(e):
-                if self._norm_for_match(sv) == norm_val:
-                    return e['lv'], 'normalize'
+        # ── Tier 2: normalize — tương tự ────────────────────────────────────
+        if _pre_scored is None:
+            _norm_hits = []
+            for e in cache:
+                for sv in _ss_vals(e):
+                    if self._norm_for_match(sv) == norm_val:
+                        _norm_hits.append(e)
+                        break
+            if _norm_hits:
+                if len(_norm_hits) == 1 or kieu_lookup in ('exact', 'exact_code', 'exact_name', 'validate_only'):
+                    return _norm_hits[0]['lv'], 'normalize'
+                # Nhiều match sau normalize → cần user chọn
+                _pre_scored = [(100.0, e) for e in _norm_hits]
 
         # validate_only: check tồn tại → giữ value gốc nếu không tìm thấy
-        if kieu_lookup == 'validate_only':
+        if _pre_scored is None and kieu_lookup == 'validate_only':
             return val_str, 'not_found'
 
         # exact (không fuzzy): dừng ở đây
-        if kieu_lookup in ('exact', 'exact_code', 'exact_name'):
+        if _pre_scored is None and kieu_lookup in ('exact', 'exact_code', 'exact_name'):
             return None, 'none'
 
         # ── Tier 3: fuzzy — score max trên tất cả ss fields ─────────────────
-        try:
-            from rapidfuzz import fuzz as _fuzz
-        except ImportError:
-            return None, 'none'
+        if _pre_scored is None:
+            try:
+                from rapidfuzz import fuzz as _fuzz
+            except ImportError:
+                return None, 'none'
 
-        def _score_entry(e):
-            """Tính fuzzy score tốt nhất trên toàn bộ ss_list."""
-            best = 0.0
-            for sv in _ss_vals(e):
-                cv_norm = self._norm_for_match(sv)
-                if not cv_norm:
-                    continue
-                _lp = (min(len(norm_val), len(cv_norm))
-                       / max(len(norm_val), len(cv_norm), 1))
-                if kieu_lookup == 'fuzzy_name':
-                    # sqrt(_lp) thay vì _lp: giảm deflation khi hai chuỗi khác độ dài nhiều
-                    s = max(_fuzz.partial_ratio(norm_val, cv_norm) * (_lp ** 0.5),
-                            _fuzz.ratio(norm_val, cv_norm))
-                    # contains → floor 75: vào popup nhưng không bao giờ auto-map
-                    if cv_norm and (norm_val in cv_norm or cv_norm in norm_val):
-                        s = max(s, 75.0)
-                else:   # fuzzy_code (default)
-                    s = max(_fuzz.ratio(norm_val, cv_norm),
-                            _fuzz.partial_ratio(norm_val, cv_norm) * _lp)
-                if s > best:
-                    best = s
-            return best
+            def _score_entry(e):
+                """Tính fuzzy score tốt nhất trên toàn bộ ss_list."""
+                best = 0.0
+                for sv in _ss_vals(e):
+                    cv_norm = self._norm_for_match(sv)
+                    if not cv_norm:
+                        continue
+                    _lp = (min(len(norm_val), len(cv_norm))
+                           / max(len(norm_val), len(cv_norm), 1))
+                    if kieu_lookup == 'fuzzy_name':
+                        # sqrt(_lp) thay vì _lp: giảm deflation khi hai chuỗi khác độ dài nhiều
+                        s = max(_fuzz.partial_ratio(norm_val, cv_norm) * (_lp ** 0.5),
+                                _fuzz.ratio(norm_val, cv_norm))
+                        # contains → floor 75: vào popup nhưng không bao giờ auto-map
+                        if cv_norm and (norm_val in cv_norm or cv_norm in norm_val):
+                            s = max(s, 75.0)
+                    else:   # fuzzy_code (default)
+                        s = max(_fuzz.ratio(norm_val, cv_norm),
+                                _fuzz.partial_ratio(norm_val, cv_norm) * _lp)
+                    if s > best:
+                        best = s
+                return best
 
-        _min_score = 20 if kieu_lookup == 'fuzzy_name' else 40
-        scored = [(s, e) for e in cache
-                  if (s := _score_entry(e)) >= _min_score]
+            _min_score = 20 if kieu_lookup == 'fuzzy_name' else 40
+            scored = [(s, e) for e in cache
+                      if (s := _score_entry(e)) >= _min_score]
 
-        if not scored:
-            return None, 'none'
+            if not scored:
+                return None, 'none'
 
-        scored.sort(key=lambda x: -x[0])
+            scored.sort(key=lambda x: -x[0])
+        else:
+            scored = _pre_scored
 
-        # Popup cho user chọn (top 3) — hiển thị field đầu tiên làm "code"
+        # Popup cho user chọn (top 3)
         candidates = [
             (s, {
                 'id'  : e['lv'],
                 'code': _ss_vals(e)[0],
-                'name': str(e.get('ht') or _ss_vals(e)[0] or ''),
+                'name': str(e.get('dn') or e.get('ht') or _ss_vals(e)[0] or ''),
             })
             for s, e in scored[:3]
         ]
@@ -9091,6 +9114,21 @@ class BOMToolApp(ctk.CTk):
         #   'col_kieu'        : {sql_col: kieu_dl},
         #   'bom_detail_type' : int,
         # }
+        # ── Build MKT fallback cache (1 lần / import) ────────────────────────
+        # Khi ItemId=NULL (không lookup được hoặc user bỏ qua), dùng mã tạm
+        # từ vB20Item_MKT theo ItemType thay vì gọi USP tạo mã rác.
+        _mkt_cache = {}
+        try:
+            _cur = conn.cursor()
+            _cur.execute(
+                "SELECT ItemTypeSX_Parent, Id FROM [BOMTool].[dbo].[vB20Item_MKT]"
+            )
+            for _r in _cur.fetchall():
+                _mkt_cache[_r[0]] = _r[1]
+        except Exception:
+            pass   # nếu view không truy cập được → không fallback, giữ NULL
+        # ─────────────────────────────────────────────────────────────────────
+
         section_data = {}
 
         for label, tbl in tables.items():
@@ -9190,6 +9228,13 @@ class BOMToolApp(ctk.CTk):
                 for (ten_excel, sql_col_ff) in ff_fields:
                     if sql_col_ff in current_ff:
                         row_vals[sql_col_ff] = current_ff[sql_col_ff]
+
+                # MKT fallback: ItemId=NULL → dùng mã tạm theo ItemType
+                if not row_vals.get('ItemId') and _mkt_cache:
+                    _item_type = row_vals.get('ItemType')
+                    _fallback = _mkt_cache.get(_item_type) or _mkt_cache.get(None)
+                    if _fallback:
+                        row_vals['ItemId'] = _fallback
 
                 # Per-row SP_HOOK BeforeInsert — dùng shared runner
                 _run_row_sp_hooks(
