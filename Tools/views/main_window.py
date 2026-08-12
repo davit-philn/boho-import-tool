@@ -8976,15 +8976,24 @@ class BOMToolApp(ctk.CTk):
 
             # Lookup master nếu có (cùng engine với HEADER)
             if kl and ss and lv:
-                cache_key = (bm, dk, ss, lv)
-                cache = detail_caches.get(cache_key, [])
-                nguong = int(rec.get('nguong_fuzzy', 0) or 0) or 92
-                self._fuzzy_ctx = {
-                    'section': bom_section,
-                    'field': sql_col,
-                    'row_idx': builtin_order,
-                }
-                raw, _ = self._lookup_generic(raw, cache, kl, nguong, _cache_key=cache_key)
+                # fuzzy_name: placeholder như "_", "--" coi là không có tên → bỏ qua lookup
+                _is_placeholder = (
+                    kl.lower() == 'fuzzy_name'
+                    and isinstance(raw, str)
+                    and raw.strip() in {'_', '--', '-', 'x', 'n/a'}
+                )
+                if _is_placeholder:
+                    raw = None
+                else:
+                    cache_key = (bm, dk, ss, lv)
+                    cache = detail_caches.get(cache_key, [])
+                    nguong = int(rec.get('nguong_fuzzy', 0) or 0) or 92
+                    self._fuzzy_ctx = {
+                        'section': bom_section,
+                        'field': sql_col,
+                        'row_idx': builtin_order,
+                    }
+                    raw, _ = self._lookup_generic(raw, cache, kl, nguong, _cache_key=cache_key)
 
             row_out[sql_col] = raw
 
