@@ -8,7 +8,7 @@ import unicodedata
 import datetime
 import math
 
-APP_VERSION = "2.2.4"
+APP_VERSION = "2.2.5"
 
 # Tên 3 tab chính — nguồn duy nhất, dùng ở mọi chỗ thay vì literal string /
 # substring match. Trước đây _on_tab_changed() check `"THDM" in tab_name`,

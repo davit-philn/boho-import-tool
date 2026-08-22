@@ -5,7 +5,7 @@
 ; =============================================================
 
 #define AppName    "BOHO IMPORT BOM-THDM"
-#define AppVersion "2.2.4"
+#define AppVersion "2.2.5"
 #define AppDir     "BOHO_IMPORT_BOM_THDM"
 #define AppExe     "BOHO_IMPORT_BOM_THDM.exe"
 #define Publisher  "BOHO"
