@@ -8722,6 +8722,25 @@ class BOMToolApp(ctk.CTk):
             lv = rec.get('truong_lay_ve',  '')
             if kl in skip_kl or not bm or not ss or not lv:
                 continue
+
+            if kl.lower() == 'code_then_name':
+                # Ưu tiên Code, fallback Name — build 2 cache RIÊNG (Code, Name)
+                # thay vì gộp 1 cache đa-field, để tái dùng nguyên pipeline Name
+                # (fuzzy_name Tier1/2/3 + tie-break) không lẫn giá trị Code vào.
+                for _ss1 in [f.strip() for f in re.split(r'[|,]', ss) if f.strip()]:
+                    _ck = (bm, dk, _ss1, lv)
+                    if _ck in seen:
+                        continue
+                    seen.add(_ck)
+                    try:
+                        caches[_ck] = self._build_cache_generic(conn, bm, dk, _ss1, lv)
+                        self._log('cache', f'Build cache {bm}', len(caches[_ck]),
+                                  'OK', f'{_ss1}->{lv} WHERE {dk}', 'ok')
+                    except Exception as e:
+                        self._log('cache', f'Build cache {bm}', 0, 'Warn', str(e), 'warn')
+                        caches[_ck] = []
+                continue
+
             cache_key = (bm, dk, ss, lv)
             if cache_key in seen:
                 continue
@@ -9047,24 +9066,53 @@ class BOMToolApp(ctk.CTk):
 
             # Lookup master nếu có (cùng engine với HEADER)
             if kl and ss and lv:
-                # fuzzy_name: placeholder như "_", "--" coi là không có tên → bỏ qua lookup
-                _is_placeholder = (
-                    kl.lower() == 'fuzzy_name'
-                    and isinstance(raw, str)
-                    and raw.strip() in {'_', '--', '-', 'x', 'n/a'}
-                )
-                if _is_placeholder:
-                    raw = None
+                if kl.lower() == 'code_then_name' and isinstance(raw, tuple):
+                    # Ưu tiên khớp Code (unique, không ambiguous) — Excel thường có
+                    # sẵn cột "Mã Vật Tư" nhưng chưa dùng tới. Miss thì fallback về
+                    # đúng pipeline Name (fuzzy_name Tier1/2/3 + tie-break) hiện có,
+                    # không viết lại logic.
+                    _code_val, _name_val = (list(raw) + ['', ''])[:2]
+                    _code_val, _name_val = _code_val.strip(), _name_val.strip()
+                    _resolved_id = None
+                    if _code_val:
+                        _code_cache = detail_caches.get((bm, dk, 'Code', lv), [])
+                        _resolved_id, _ = self._lookup_generic(
+                            _code_val, _code_cache, 'exact_code',
+                            _cache_key=(bm, dk, 'Code', lv), _no_popup=True)
+                    if _resolved_id is not None:
+                        raw = _resolved_id
+                    elif _name_val:
+                        _name_cache = detail_caches.get((bm, dk, 'Name', lv), [])
+                        nguong = int(rec.get('nguong_fuzzy', 0) or 0) or 92
+                        self._fuzzy_ctx = {
+                            'section': bom_section,
+                            'field': sql_col,
+                            'row_idx': builtin_order,
+                        }
+                        raw, _ = self._lookup_generic(
+                            _name_val, _name_cache, 'fuzzy_name', nguong,
+                            _cache_key=(bm, dk, 'Name', lv))
+                    else:
+                        raw = None
                 else:
-                    cache_key = (bm, dk, ss, lv)
-                    cache = detail_caches.get(cache_key, [])
-                    nguong = int(rec.get('nguong_fuzzy', 0) or 0) or 92
-                    self._fuzzy_ctx = {
-                        'section': bom_section,
-                        'field': sql_col,
-                        'row_idx': builtin_order,
-                    }
-                    raw, _ = self._lookup_generic(raw, cache, kl, nguong, _cache_key=cache_key)
+                    # fuzzy_name: placeholder như "_", "--" coi là không có tên → bỏ qua lookup
+                    _is_placeholder = (
+                        kl.lower() == 'fuzzy_name'
+                        and isinstance(raw, str)
+                        and raw.strip() in {'_', '--', '-', 'x', 'n/a'}
+                    )
+                    if _is_placeholder:
+                        raw = None
+                    else:
+                        cache_key = (bm, dk, ss, lv)
+                        cache = detail_caches.get(cache_key, [])
+                        nguong = int(rec.get('nguong_fuzzy', 0) or 0) or 92
+                        self._fuzzy_ctx = {
+                            'section': bom_section,
+                            'field': sql_col,
+                            'row_idx': builtin_order,
+                        }
+                        raw, _ = self._lookup_generic(raw, cache, kl, nguong, _cache_key=cache_key)
 
             row_out[sql_col] = raw
 
