@@ -68,6 +68,12 @@ except Exception:
 from views.widgets import (
     CLabel, CButton, _SearchCombo, Tooltip, SheetTable,
 )
+
+# Mã B20Item dạng chuẩn (vd NVL10-000003) — dùng để tie-break khi 1 tên trùng
+# nhiều mã (vd mã legacy chứa '#'). Xem _lookup_generic._resolve_dup().
+_NVL_CODE_RE = re.compile(r'^NVL\d+-\d+$', re.IGNORECASE)
+
+
 class BOMToolApp(ctk.CTk):
     def __init__(self):
         super().__init__()
@@ -8476,17 +8482,25 @@ class BOMToolApp(ctk.CTk):
         where     = f"WHERE {dieu_kien}" if dieu_kien else ""
         cur       = conn.cursor()
         col_sel   = ', '.join(f'[{f}]' for f in ss_fields)
+        # Tie-break: cần cột Code thật (kể cả khi truong_ss không phải Code) để ưu
+        # tiên mã chuẩn "NVLxx-xxxxxx" khi 1 tên trùng nhiều mã (vd B20Item.Name).
+        _need_code_tb = (
+            bang_master.strip().lower() == 'b20item'
+            and 'code' not in [f.lower() for f in ss_fields]
+        )
         try:
-            sql = f"SELECT {col_sel}, [{truong_lv}] FROM [{bang_master}] WITH(NOLOCK) {where}"
+            code_sel = ', [Code]' if _need_code_tb else ''
+            sql = f"SELECT {col_sel}, [{truong_lv}]{code_sel} FROM [{bang_master}] WITH(NOLOCK) {where}"
             cur.execute(sql)
             rows = cur.fetchall()
             n = len(ss_fields)
             return [
                 {
-                    'ss_list': [r[i] for i in range(n)],
-                    'lv'     : r[n],
-                    'ht'     : r[0],          # field đầu tiên dùng làm display
-                    'dn'     : r[1] if n > 1 else r[0],  # field thứ 2 làm tên hiển thị
+                    'ss_list' : [r[i] for i in range(n)],
+                    'lv'      : r[n],
+                    'ht'      : r[0],          # field đầu tiên dùng làm display
+                    'dn'      : r[1] if n > 1 else r[0],  # field thứ 2 làm tên hiển thị
+                    'code_tb' : r[n + 1] if _need_code_tb else r[0],  # mã thật, dùng tie-break trùng tên
                 }
                 for r in rows
             ]
@@ -8543,17 +8557,73 @@ class BOMToolApp(ctk.CTk):
                 return [str(v or '').strip() for v in e['ss_list']]
             return [str(e.get('ss') or '').strip()]
 
-        # ── Tier 1: exact — so sánh từng field theo thứ tự ──────────────────
-        for e in cache:
-            for sv in _ss_vals(e):
-                if sv == val_str:
-                    return e['lv'], 'exact'
+        # ── Index hoá cache 1 lần/list-instance (O(1) lookup thay vì quét N mỗi dòng) ──
+        # Cache list được _build_all_caches() dựng mới mỗi lần import/validate nên
+        # id(cache) tự đổi → index cũ tự "hết hạn", không cần invalidate thủ công.
+        if not hasattr(self, '_lookup_idx'):
+            self._lookup_idx = {}
+        _idx_key = id(cache)
+        _idx = self._lookup_idx.get(_idx_key)
+        if _idx is None:
+            _exact_idx, _norm_idx = {}, {}
+            for e in cache:
+                for sv in _ss_vals(e):
+                    _exact_idx.setdefault(sv, []).append(e)
+                    _norm_idx.setdefault(self._norm_for_match(sv), []).append(e)
+            _idx = (_exact_idx, _norm_idx)
+            self._lookup_idx[_idx_key] = _idx
+        _exact_idx, _norm_idx = _idx
 
-        # ── Tier 2: normalize — tương tự, theo thứ tự ───────────────────────
-        for e in cache:
-            for sv in _ss_vals(e):
-                if self._norm_for_match(sv) == norm_val:
-                    return e['lv'], 'normalize'
+        def _resolve_dup(hits, tag):
+            """
+            >1 entry cùng khớp giá trị so sánh (vd nhiều B20Item trùng Name).
+            Tie-break: ưu tiên đúng 1 mã dạng chuẩn "NVLxx-xxxxxx". Nếu vẫn
+            còn nhiều (hoặc không cái nào khớp pattern) → đưa vào popup chọn
+            (tái dùng cơ chế batch/collect/resolutions đã có của Tier 3 fuzzy).
+            """
+            _nvl_hits = [e for e in hits if _NVL_CODE_RE.match(str(e.get('code_tb') or '').strip())]
+            if len(_nvl_hits) == 1:
+                return _nvl_hits[0]['lv'], tag
+
+            candidates = [
+                (100.0, {
+                    'id'  : e['lv'],
+                    'code': str(e.get('code_tb') or _ss_vals(e)[0] or ''),
+                    'name': str(e.get('ht') or _ss_vals(e)[0] or ''),
+                })
+                for e in hits
+            ]
+            res_key = (val_str, _cache_key)
+            if hasattr(self, '_fuzzy_resolutions') and res_key in self._fuzzy_resolutions:
+                chosen = self._fuzzy_resolutions[res_key]
+                return chosen, ('fuzzy_user' if chosen else 'none')
+            if getattr(self, '_fuzzy_collect_mode', False):
+                entry = dict(getattr(self, '_fuzzy_ctx', {}))
+                entry.update({'val': val_str, 'candidates': candidates, 'cache_key': _cache_key})
+                if not hasattr(self, '_fuzzy_pending'):
+                    self._fuzzy_pending = []
+                self._fuzzy_pending.append(entry)
+                return None, 'fuzzy_pending'
+            if getattr(self, '_fuzzy_batch_done', False):
+                return None, 'none'
+            if _no_popup:
+                return None, 'none'
+            chosen = self._show_suggest_dialog(val_str, candidates)
+            return chosen, ('fuzzy_user' if chosen else 'none')
+
+        # ── Tier 1: exact ─────────────────────────────────────────────────
+        _exact_hits = _exact_idx.get(val_str)
+        if _exact_hits:
+            if len(_exact_hits) == 1:
+                return _exact_hits[0]['lv'], 'exact'
+            return _resolve_dup(_exact_hits, 'exact')
+
+        # ── Tier 2: normalize ─────────────────────────────────────────────
+        _norm_hits = _norm_idx.get(norm_val)
+        if _norm_hits:
+            if len(_norm_hits) == 1:
+                return _norm_hits[0]['lv'], 'normalize'
+            return _resolve_dup(_norm_hits, 'normalize')
 
         # validate_only: check tồn tại → giữ value gốc nếu không tìm thấy
         if kieu_lookup == 'validate_only':
@@ -8605,7 +8675,7 @@ class BOMToolApp(ctk.CTk):
         candidates = [
             (s, {
                 'id'  : e['lv'],
-                'code': _ss_vals(e)[0],
+                'code': str(e.get('code_tb') or _ss_vals(e)[0] or ''),
                 'name': str(e.get('ht') or _ss_vals(e)[0] or ''),
             })
             for s, e in scored[:3]
@@ -8640,6 +8710,7 @@ class BOMToolApp(ctk.CTk):
         Scan mapping → pre-build cache cho mọi trường có lookup.
         Cache key = (bang_master, dieu_kien, truong_so_sanh, truong_lay_ve)
         """
+        self._lookup_idx = {}   # reset index (Tier 1/2) — cache list mới, tránh dùng index cũ
         caches = {}
         seen   = set()
         skip_kl = {'', 'sp_rowid', 'sp_version', 'sp_code', 'lookup'}
