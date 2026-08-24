@@ -9283,6 +9283,46 @@ class BOMToolApp(ctk.CTk):
             builtin_order = 0
             resolved_rows = []
 
+            # ── BTP detection (chỉ BOM2) ─────────────────────────────────────
+            # Rule: STT nguyên (không phần thập phân) + Tên vật tư RỖNG ở chính
+            # dòng đó + có ít nhất 1 dòng con thập phân (X.1, X.2...) ngay bên
+            # dưới → dòng "chi tiết tổ hợp/lắp ghép" (BTP), không phải NVL đơn.
+            # BTP thiếu mã KHÔNG dùng MKT — để trống ItemId, cho SP_HOOK
+            # BeforeInsertBatch (usp_B20BOM_Create_ItemCode, Condition:
+            # EMPTY(ItemId), đã Kích hoạt=1 sẵn trong CK_Mapping_v5) tự chạy
+            # như cơ chế gốc.
+            def _get_stt_pre(raw):
+                """str(0 or '') = '' — xử lý integer 0 đúng (đồng nhất với _get_stt trong loop)."""
+                if raw in (0, 0.0): return "0"
+                if raw is None or raw == '': return ''
+                if isinstance(raw, float) and _math.isnan(raw): return ''
+                return str(raw).strip()
+
+            _btp_stt_set = set()
+            if section == 'BOM2' and stt_col is not None:
+                _ten_vt_col = next(
+                    (c for c in df.columns if _norm_vn(str(c)) == _norm_vn('Tên vật tư')),
+                    None)
+                if _ten_vt_col is not None:
+                    _stt_seq = [_get_stt_pre(df.iloc[_i].get(stt_col)) for _i in range(len(df))]
+                    for _i, _s in enumerate(_stt_seq):
+                        if not _s or '.' in _s or not _s.replace('.', '', 1).isdigit():
+                            continue
+                        _vt_raw = df.iloc[_i].get(_ten_vt_col)
+                        _vt_empty = (_vt_raw is None
+                                     or (isinstance(_vt_raw, float) and _math.isnan(_vt_raw))
+                                     or str(_vt_raw).strip() in ('', 'nan'))
+                        if not _vt_empty:
+                            continue
+                        _has_child = False
+                        for _ns in _stt_seq[_i + 1:]:
+                            if _ns.startswith(_s + '.'):
+                                _has_child = True
+                            else:
+                                break
+                        if _has_child:
+                            _btp_stt_set.add(_s)
+
 
             for _, df_row in df.iterrows():
                 if df_row.isna().all():
@@ -9337,8 +9377,11 @@ class BOMToolApp(ctk.CTk):
                     if sql_col_ff in current_ff:
                         row_vals[sql_col_ff] = current_ff[sql_col_ff]
 
-                # MKT fallback: ItemId=NULL → dùng mã tạm theo ItemType
-                if not row_vals.get('ItemId') and _mkt_cache:
+                # MKT fallback: ItemId=NULL → dùng mã tạm theo ItemType.
+                # BỎ QUA cho dòng BTP (stt_v trong _btp_stt_set) — để trống
+                # ItemId, SP_HOOK BeforeInsertBatch (usp_B20BOM_Create_ItemCode)
+                # tự tạo mã thật thay vì mã tạm.
+                if not row_vals.get('ItemId') and _mkt_cache and stt_v not in _btp_stt_set:
                     _item_type = row_vals.get('ItemType')
                     _fallback = _mkt_cache.get(_item_type) or _mkt_cache.get(None)
                     if _fallback:
