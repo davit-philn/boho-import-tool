@@ -9126,15 +9126,23 @@ class BOMToolApp(ctk.CTk):
                     else:
                         raw = None
                 elif kl.lower() == 'nvl_or_btp' and isinstance(raw, tuple):
-                    # Dòng NVL bình thường (Tên vật tư có giá trị) → fuzzy_name
-                    # pipeline y nguyên. Dòng BTP (Tên vật tư rỗng, is_btp_row=True
-                    # do _generate_bom_details xác định qua STT) → tìm theo Tên
-                    # chi tiết (đúng field SP dùng làm Name khi tạo mã mới) — có
-                    # rồi thì tái dùng, chưa có thì để trống cho SP_HOOK tạo mới.
+                    # is_btp_row QUYẾT ĐỊNH TRƯỚC (không xét _vt_val có giá trị
+                    # hay không) — vì dòng BTP dạng "+" ghép nhiều vật liệu vẫn
+                    # có _vt_val khác rỗng (chuỗi ghép), nhưng không phải NVL
+                    # đơn nên không được đưa vào fuzzy_name. Dòng BTP → tìm
+                    # theo Tên chi tiết (đúng field SP dùng làm Name khi tạo
+                    # mã mới) — có rồi thì tái dùng, chưa có thì để trống cho
+                    # SP_HOOK tạo mới. Dòng NVL bình thường mới chạy fuzzy_name
+                    # pipeline như cũ theo Tên vật tư.
                     _vt_val, _ct_val = (list(raw) + ['', ''])[:2]
                     _vt_val, _ct_val = _vt_val.strip(), _ct_val.strip()
                     _name_cache = detail_caches.get((bm, dk, ss, lv), [])
-                    if _vt_val:
+                    if is_btp_row:
+                        # Scope theo item_code0 (mã sản phẩm cha, đúng prefix SP
+                        # tự dùng) — nếu nhiều mã trùng tên (dữ liệu cũ đã tạo
+                        # rác) thì lấy mã mới nhất, không bỏ cuộc như popup thường.
+                        raw = self._find_existing_btp_code(conn, item_code0, _ct_val) if _ct_val else None
+                    elif _vt_val:
                         nguong = int(rec.get('nguong_fuzzy', 0) or 0) or 92
                         self._fuzzy_ctx = {
                             'section': bom_section,
@@ -9144,11 +9152,6 @@ class BOMToolApp(ctk.CTk):
                         raw, _ = self._lookup_generic(
                             _vt_val, _name_cache, 'fuzzy_name', nguong,
                             _cache_key=(bm, dk, ss, lv))
-                    elif is_btp_row and _ct_val:
-                        # Scope theo item_code0 (mã sản phẩm cha, đúng prefix SP
-                        # tự dùng) — nếu nhiều mã trùng tên (dữ liệu cũ đã tạo
-                        # rác) thì lấy mã mới nhất, không bỏ cuộc như popup thường.
-                        raw = self._find_existing_btp_code(conn, item_code0, _ct_val)
                     else:
                         raw = None
                 else:
@@ -9356,13 +9359,22 @@ class BOMToolApp(ctk.CTk):
             resolved_rows = []
 
             # ── BTP detection (chỉ BOM2) ─────────────────────────────────────
-            # Rule: STT nguyên (không phần thập phân) + Tên vật tư RỖNG ở chính
-            # dòng đó + có ít nhất 1 dòng con thập phân (X.1, X.2...) ngay bên
-            # dưới → dòng "chi tiết tổ hợp/lắp ghép" (BTP), không phải NVL đơn.
+            # 2 rule độc lập, cùng đánh dấu STT nguyên (không phần thập phân)
+            # là BTP — không phải NVL đơn:
+            #   1. Tên vật tư RỖNG ở chính dòng đó + có ít nhất 1 dòng con thập
+            #      phân (X.1, X.2...) ngay bên dưới → "chi tiết tổ hợp" tách
+            #      thành các dòng con.
+            #   2. Tên vật tư chứa dấu "+" (ghép nhiều vật liệu vào 1 ô, vd
+            #      "MDF... + Tấm chống cháy... + ...") → vật liệu ghép/dán
+            #      thành 1 tấm composite trước khi cắt, không lookup được
+            #      theo tên ghép. CHỈ áp dụng cho STT nguyên có nhãn "Tên chi
+            #      tiết" riêng biệt (KHUNG BAO ĐỨNG...) — KHÔNG áp dụng cho
+            #      dòng con dạng "TỔ HỢP" (nhãn lặp lại nhiều lần trong cùng
+            #      BOM, tìm theo Tên chi tiết dễ tái dùng nhầm).
             # BTP thiếu mã KHÔNG dùng MKT — để trống ItemId, cho SP_HOOK
             # BeforeInsertBatch (usp_B20BOM_Create_ItemCode, Condition:
             # EMPTY(ItemId), đã Kích hoạt=1 sẵn trong CK_Mapping_v5) tự chạy
-            # như cơ chế gốc.
+            # như cơ chế gốc (hoặc tái dùng mã cũ qua _find_existing_btp_code).
             def _get_stt_pre(raw):
                 """str(0 or '') = '' — xử lý integer 0 đúng (đồng nhất với _get_stt trong loop)."""
                 if raw in (0, 0.0): return "0"
@@ -9384,6 +9396,13 @@ class BOMToolApp(ctk.CTk):
                         _vt_empty = (_vt_raw is None
                                      or (isinstance(_vt_raw, float) and _math.isnan(_vt_raw))
                                      or str(_vt_raw).strip() in ('', 'nan'))
+
+                        # Rule 2: STT nguyên + Tên vật tư chứa "+" (ghép nhiều vật liệu)
+                        if not _vt_empty and '+' in str(_vt_raw):
+                            _btp_stt_set.add(_s)
+                            continue
+
+                        # Rule 1: STT nguyên + rỗng + có con thập phân
                         if not _vt_empty:
                             continue
                         _has_child = False
