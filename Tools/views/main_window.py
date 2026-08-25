@@ -1067,16 +1067,24 @@ class BOMToolApp(ctk.CTk):
 
         # Dự án — auto-suy ra từ Đơn hàng đã chọn (B30BizDocSO.ProductId),
         # không cho chọn tay để tránh fuzzy-match sai như trước (xem
-        # _on_bom_order_change / _load_bom_project_for_order).
+        # _on_bom_order_change / _load_bom_project_for_order). Width cố định
+        # + truncate + Tooltip xem đầy đủ khi hover — tránh tự co giãn đẩy
+        # lệch toolbar khi tên dự án dài.
         ctk.CTkLabel(bar, text="Dự án:",
             font=ctk.CTkFont(*FONT_BODY),
             text_color=("gray40","gray55"),
             fg_color="transparent").pack(side=tk.LEFT, padx=(0, 4))
-        self.lbl_bom_project = ctk.CTkLabel(bar, text="—",
+        self._bom_project_full_text = ''
+        self.ent_bom_project = ctk.CTkEntry(bar,
             font=ctk.CTkFont(*FONT_BODY_B),
-            text_color=("gray20","gray85"),
-            fg_color="transparent", width=140, anchor="w")
-        self.lbl_bom_project.pack(side=tk.LEFT, padx=(0, 6), pady=10)
+            height=32, width=220, corner_radius=6,
+            state="disabled",
+            fg_color=("#FFFFFF", "#2D2D30"),
+            text_color=("#0F172A", "#E8E8E8"),
+            border_color=("#E2E8F0", "#444444"))
+        self.ent_bom_project.pack(side=tk.LEFT, padx=(0, 6), pady=10)
+        Tooltip(self.ent_bom_project, lambda: self._bom_project_full_text)
+        self._set_bom_project_display('')
 
         ctk.CTkFrame(bar, fg_color=("gray65","#3C3C3C"),
                      width=1, height=28).pack(side=tk.LEFT, padx=6, pady=PAD_MD)
@@ -4982,10 +4990,22 @@ class BOMToolApp(ctk.CTk):
             self.btn_view_sql.configure(state=_s)
         self._bom_selected_product_id = None
         if self._bom_selected_order_id:
-            self.lbl_bom_project.configure(text="⏳ …")
+            self._set_bom_project_display('⏳ …')
             self._load_bom_project_for_order(self._bom_selected_order_id)
         else:
-            self.lbl_bom_project.configure(text="—")
+            self._set_bom_project_display('')
+
+    def _set_bom_project_display(self, full_text):
+        """Cập nhật ô Dự án (read-only, fixed width) — truncate nếu dài,
+        Tooltip trên ent_bom_project sẽ hiện đầy đủ khi hover."""
+        self._bom_project_full_text = full_text or ''
+        disp = full_text.strip() if full_text else '—'
+        if len(disp) > 32:
+            disp = disp[:31] + '…'
+        self.ent_bom_project.configure(state="normal")
+        self.ent_bom_project.delete(0, tk.END)
+        self.ent_bom_project.insert(0, disp)
+        self.ent_bom_project.configure(state="disabled")
 
     def _load_bom_project_for_order(self, biz_doc_id):
         """Suy ra Dự án (ProductId) từ Đơn hàng đã chọn — B30BizDocSO.ProductId
@@ -5016,10 +5036,10 @@ class BOMToolApp(ctk.CTk):
             return
         if error or not row or row[0] is None:
             self._bom_selected_product_id = None
-            self.lbl_bom_project.configure(text="⚠ Không rõ")
+            self._set_bom_project_display('⚠ Không rõ')
             return
         self._bom_selected_product_id = row[0]
-        self.lbl_bom_project.configure(text=str(row[1] or '—'))
+        self._set_bom_project_display(str(row[1] or ''))
 
     def _bom_try_auto_select_order(self):
         """Khớp 'Đơn hàng' trong Excel header với dropdown.
