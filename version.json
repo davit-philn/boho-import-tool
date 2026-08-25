@@ -1,6 +1,6 @@
 {
-    "version": "2.2.5",
-    "release_date": "2026-08-11",
-    "download_url": "https://github.com/davit-philn/boho-import-tool/releases/download/v2.2.5/BOHO_IMPORT_BOM_THDM_v2.2.5_Portable.zip",
-    "release_notes": "perf: revert duplicate-name popup (qua cham), giu MKT fallback ItemId NULL"
+    "version": "2.2.6",
+    "release_date": "2026-08-25",
+    "download_url": "https://github.com/davit-philn/boho-import-tool/releases/download/v2.2.6/BOHO_IMPORT_BOM_THDM_v2.2.6_Portable.zip",
+    "release_notes": "BOM2: phan biet BTP/NVL (USP tao ma that thay MKT), tai dung ma BTP cu; BOM3: uu tien Ma Vat Tu truoc khi fallback ten; BOM4: bo fuzzy KIEN tranh nham du an khac; Du an tu dong theo Don hang"
 }
