@@ -8123,9 +8123,9 @@ class BOMToolApp(ctk.CTk):
                 self._fuzzy_resolutions = {}
             self._fuzzy_batch_done = True
             self._bom_layer2_done  = True
-            status_msg = "✅  Validate + DB OK"
+            status_msg = "✅  Kiểm tra thành công"
             if n_pending:
-                status_msg += f" — {n_pending} mã fuzzy đã xác nhận"
+                status_msg += f" — {n_pending} mã đã đối chiếu"
             if n_wrn:
                 status_msg += f" — {n_wrn} cảnh báo"
             self._set_status(status_msg, C["green"])
@@ -8134,11 +8134,13 @@ class BOMToolApp(ctk.CTk):
             _s = tk.NORMAL if (has_order and has_creator) else tk.DISABLED
             self.btn_import.config(state=_s)
             self.btn_view_sql.configure(state=_s)
-            popup_msg = "Dữ liệu hợp lệ và đã tra cứu DB!\n"
+            popup_msg = "Dữ liệu hợp lệ và đã đối chiếu với hệ thống!\n"
             if n_pending:
-                popup_msg += f"{n_pending} mã fuzzy đã được xác nhận.\n"
-            popup_msg += str(n_wrn) + " cảnh báo (không chặn import)\n\nNhấn Import để tiếp tục."
-            self._show_msg("Validate + DB OK", popup_msg, 'info')
+                popup_msg += f"{n_pending} mã vật tư đã được đối chiếu với hệ thống.\n"
+            if n_wrn:
+                popup_msg += f"Có {n_wrn} cảnh báo, không ảnh hưởng import.\n"
+            popup_msg += "\nNhấn Import để tiếp tục."
+            self._show_msg("✅ Kiểm tra thành công", popup_msg, 'info')
 
         threading.Thread(target=_worker, daemon=True).start()
 
@@ -10453,10 +10455,10 @@ class BOMToolApp(ctk.CTk):
             _violations = result.get('violations', [])
             if _violations:
                 _vio_text = '\n\n'.join(
-                    f"• {_n}:\n  {_m}" for _n, _m in _violations
+                    f"• {_m}" for _n, _m in _violations
                 )
                 if not self._ask_msg(
-                    f"Cảnh báo Validator ({len(_violations)} mục)",
+                    f"Cảnh báo trước khi Import ({len(_violations)} mục)",
                     f"Phát hiện {len(_violations)} cảnh báo:\n\n{_vio_text}"
                     f"\n\nVẫn tiếp tục import không?"
                 ):

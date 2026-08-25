@@ -2,5 +2,5 @@
     "version": "2.2.6",
     "release_date": "2026-08-25",
     "download_url": "https://github.com/davit-philn/boho-import-tool/releases/download/v2.2.6/BOHO_IMPORT_BOM_THDM_v2.2.6_Portable.zip",
-    "release_notes": "BOM2: phan biet BTP/NVL (USP tao ma that thay MKT), tai dung ma BTP cu; BOM3: uu tien Ma Vat Tu truoc khi fallback ten; BOM4: bo fuzzy KIEN tranh nham du an khac; Du an tu dong theo Don hang"
+    "release_notes": "Cai thien do chinh xac khi import BOM: tu nhan dien dung vat tu/ban thanh pham, giam gan nham ma. Du an tu dong lay theo Don hang, khong can chon tay."
 }
