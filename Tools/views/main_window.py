@@ -8908,6 +8908,20 @@ class BOMToolApp(ctk.CTk):
             kl  = _nan_str(rec.get('kieu_lookup', ''))
             if not (bm and ss and lv and kl):
                 continue
+
+            if kl.lower() == 'code_then_name':
+                # Ưu tiên Code, fallback Name — build 2 cache RIÊNG (Code, Name),
+                # đồng nhất với _build_all_caches (xem code_then_name trong
+                # _resolve_detail_row, tìm 2 cache_key tách biệt).
+                for _ss1 in [f.strip() for f in re.split(r'[|,]', ss) if f.strip()]:
+                    _ck = (bm, dk, _ss1, lv)
+                    if _ck not in caches:
+                        try:
+                            caches[_ck] = self._build_cache_generic(conn, bm, dk, _ss1, lv)
+                        except Exception as e:
+                            self._log('', f'detail_cache({bm})', 0, 'Warn', str(e), 'warn')
+                continue
+
             key = (bm, dk, ss, lv)
             if key not in caches:
                 try:
