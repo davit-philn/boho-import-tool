@@ -8916,9 +8916,36 @@ class BOMToolApp(ctk.CTk):
                     self._log('', f'detail_cache({bm})', 0, 'Warn', str(e), 'warn')
         return caches
 
+    def _find_existing_btp_code(self, conn, item_code0, ten_chi_tiet):
+        """
+        Tìm B20Item BTP đã tạo trước đó cho đúng sản phẩm cha (item_code0) +
+        đúng tên chi tiết — dùng để tái dùng thay vì để USP tạo mã mới mỗi
+        lần import lại cùng 1 BOM.
+        Scope theo Code LIKE item_code0 + '.%' (đúng prefix mà
+        usp_B20BOM_Create_ItemCode tự dùng để sinh số thứ tự) để tránh lấy
+        nhầm item cùng tên nhưng khác sản phẩm. Nếu có nhiều mã trùng (dữ
+        liệu cũ đã bị tạo rác) → lấy mã mới nhất (Id lớn nhất).
+        Trả về Id hoặc None.
+        """
+        if not item_code0 or not ten_chi_tiet:
+            return None
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT TOP 1 Id FROM B20Item "
+                "WHERE IsActive = 1 AND Name = ? AND Code LIKE ? "
+                "ORDER BY Id DESC",
+                (ten_chi_tiet, item_code0 + '.%')
+            )
+            row = cur.fetchone()
+            return row[0] if row else None
+        except Exception:
+            return None
+
     def _resolve_detail_row(self, mapping_recs, df_row, parent_row, conn,
                             detail_caches, now, builtin_order, bom_detail_type,
-                            sp_cfgs=None, bom_section=''):
+                            sp_cfgs=None, bom_section='', is_btp_row=False,
+                            item_code0=None):
         """
         Resolve một hàng DataFrame (BOM2/3/4) → dict {sql_col: value}.
         - mapping_recs : list record từ mapping sheet BOM2/3/4
@@ -8926,6 +8953,10 @@ class BOMToolApp(ctk.CTk):
         - parent_row   : dict B20BOM header đã resolve (để copy BranchCode, EffectiveDate, ...)
         - builtin_order: số thứ tự hàng (1, 2, 3...)
         - bom_detail_type: 2 / 3 / 4
+        - is_btp_row   : True nếu dòng này được xác định là BTP (STT nguyên +
+                         Tên vật tư rỗng + có con) — dùng cho kieu_lookup=nvl_or_btp
+        - item_code0   : Code của B20Item ứng với ItemId0 (sản phẩm cha) — dùng
+                         để scope khi tái dùng mã BTP đã tạo trước đó
         """
         import datetime as _dt
         import math as _math
@@ -9094,6 +9125,32 @@ class BOMToolApp(ctk.CTk):
                             _cache_key=(bm, dk, 'Name', lv))
                     else:
                         raw = None
+                elif kl.lower() == 'nvl_or_btp' and isinstance(raw, tuple):
+                    # Dòng NVL bình thường (Tên vật tư có giá trị) → fuzzy_name
+                    # pipeline y nguyên. Dòng BTP (Tên vật tư rỗng, is_btp_row=True
+                    # do _generate_bom_details xác định qua STT) → tìm theo Tên
+                    # chi tiết (đúng field SP dùng làm Name khi tạo mã mới) — có
+                    # rồi thì tái dùng, chưa có thì để trống cho SP_HOOK tạo mới.
+                    _vt_val, _ct_val = (list(raw) + ['', ''])[:2]
+                    _vt_val, _ct_val = _vt_val.strip(), _ct_val.strip()
+                    _name_cache = detail_caches.get((bm, dk, ss, lv), [])
+                    if _vt_val:
+                        nguong = int(rec.get('nguong_fuzzy', 0) or 0) or 92
+                        self._fuzzy_ctx = {
+                            'section': bom_section,
+                            'field': sql_col,
+                            'row_idx': builtin_order,
+                        }
+                        raw, _ = self._lookup_generic(
+                            _vt_val, _name_cache, 'fuzzy_name', nguong,
+                            _cache_key=(bm, dk, ss, lv))
+                    elif is_btp_row and _ct_val:
+                        # Scope theo item_code0 (mã sản phẩm cha, đúng prefix SP
+                        # tự dùng) — nếu nhiều mã trùng tên (dữ liệu cũ đã tạo
+                        # rác) thì lấy mã mới nhất, không bỏ cuộc như popup thường.
+                        raw = self._find_existing_btp_code(conn, item_code0, _ct_val)
+                    else:
+                        raw = None
                 else:
                     # fuzzy_name: placeholder như "_", "--" coi là không có tên → bỏ qua lookup
                     _is_placeholder = (
@@ -9237,6 +9294,21 @@ class BOMToolApp(ctk.CTk):
             pass   # nếu view không truy cập được → không fallback, giữ NULL
         # ─────────────────────────────────────────────────────────────────────
 
+        # ── Mã sản phẩm cha (ItemCode0) — 1 lần / BOM, dùng để scope khi tái
+        # dùng mã BTP đã tạo trước đó (tránh lấy nhầm item cùng tên khác sản
+        # phẩm, và tránh tạo rác khi import lại đúng BOM này) ────────────────
+        _item_code0 = None
+        _item_id0 = parent_row.get('ItemId0')
+        if _item_id0:
+            try:
+                _cur0 = conn.cursor()
+                _cur0.execute("SELECT Code FROM B20Item WHERE Id = ?", (_item_id0,))
+                _r0 = _cur0.fetchone()
+                if _r0:
+                    _item_code0 = _r0[0]
+            except Exception:
+                pass
+
         section_data = {}
 
         for label, tbl in tables.items():
@@ -9369,7 +9441,9 @@ class BOMToolApp(ctk.CTk):
                 row_vals = self._resolve_detail_row(
                     detail_recs, df_row, parent_row, conn,
                     detail_caches, now, builtin_order, bom_detail_type,
-                    sp_cfgs=sp_cfgs_section, bom_section=section
+                    sp_cfgs=sp_cfgs_section, bom_section=section,
+                    is_btp_row=(stt_v in _btp_stt_set),
+                    item_code0=_item_code0
                 )
 
                 # Fill-Forward
