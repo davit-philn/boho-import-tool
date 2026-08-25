@@ -1101,12 +1101,14 @@ class BOMToolApp(ctk.CTk):
         self.btn_import.pack(side=tk.LEFT, padx=(0, 4), pady=10)
 
         self.btn_view_sql = _ab_btn("📋  Xem SQL", self._view_sql_clicked, state="disabled")
+        self.btn_view_sql.pack_forget()  # Ẩn tạm — xoá dòng này để bật lại
 
         self.btn_undo_import = _ab_btn("↩  Hoàn tác import", self._undo_last_import,
                                        state="disabled")
         Tooltip(self.btn_undo_import,
                 lambda: "Xóa BOM vừa import khỏi BRAVO (gọi SP usp_BOMTool_DeleteBOM"
                         " — khách hàng cần deploy SP trước)")
+        self.btn_undo_import.pack_forget()  # Ẩn tạm — xoá dòng này để bật lại
 
         # Kẻ ngang phân cách toolbar → bảng
         tk.Frame(tab, bg=dt["border"], height=1).pack(fill=tk.X)
