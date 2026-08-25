@@ -95,6 +95,7 @@ class BOMToolApp(ctk.CTk):
         self._current_file = ""
         self._bom_order_map          = {}    # display → BizDocId
         self._bom_selected_order_id  = None  # BizDocId đã chọn
+        self._bom_selected_product_id = None  # ProductId suy ra từ Đơn hàng (B30BizDocSO.ProductId)
         self._bom_layer2_done        = False  # True sau khi Layer 2 prescan hoàn thành tại Kiểm tra
         self._batch_files  = []
         self._loading_dlg  = None
@@ -1060,6 +1061,22 @@ class BOMToolApp(ctk.CTk):
             state="disabled")
         self.cmb_order.set("— Chọn đơn hàng —")
         self.cmb_order.pack(side=tk.LEFT, padx=(0, 6), pady=10)
+
+        ctk.CTkFrame(bar, fg_color=("gray65","#3C3C3C"),
+                     width=1, height=28).pack(side=tk.LEFT, padx=6, pady=PAD_MD)
+
+        # Dự án — auto-suy ra từ Đơn hàng đã chọn (B30BizDocSO.ProductId),
+        # không cho chọn tay để tránh fuzzy-match sai như trước (xem
+        # _on_bom_order_change / _load_bom_project_for_order).
+        ctk.CTkLabel(bar, text="Dự án:",
+            font=ctk.CTkFont(*FONT_BODY),
+            text_color=("gray40","gray55"),
+            fg_color="transparent").pack(side=tk.LEFT, padx=(0, 4))
+        self.lbl_bom_project = ctk.CTkLabel(bar, text="—",
+            font=ctk.CTkFont(*FONT_BODY_B),
+            text_color=("gray20","gray85"),
+            fg_color="transparent", width=140, anchor="w")
+        self.lbl_bom_project.pack(side=tk.LEFT, padx=(0, 6), pady=10)
 
         ctk.CTkFrame(bar, fg_color=("gray65","#3C3C3C"),
                      width=1, height=28).pack(side=tk.LEFT, padx=6, pady=PAD_MD)
@@ -4963,6 +4980,46 @@ class BOMToolApp(ctk.CTk):
             _s = tk.NORMAL if n_err == 0 and self._bom_selected_order_id and has_creator else tk.DISABLED
             self.btn_import.config(state=_s)
             self.btn_view_sql.configure(state=_s)
+        self._bom_selected_product_id = None
+        if self._bom_selected_order_id:
+            self.lbl_bom_project.configure(text="⏳ …")
+            self._load_bom_project_for_order(self._bom_selected_order_id)
+        else:
+            self.lbl_bom_project.configure(text="—")
+
+    def _load_bom_project_for_order(self, biz_doc_id):
+        """Suy ra Dự án (ProductId) từ Đơn hàng đã chọn — B30BizDocSO.ProductId
+        là quan hệ 1-1 (1 đơn hàng thuộc đúng 1 dự án), thay cho fuzzy_name
+        match "Dự án" từ text Excel (dễ chọn nhầm khi trùng/gần tên)."""
+        import threading as _th
+        _th.Thread(
+            target=self._load_bom_project_for_order_worker,
+            args=(biz_doc_id,), daemon=True).start()
+
+    def _load_bom_project_for_order_worker(self, biz_doc_id):
+        try:
+            conn = self._get_db_conn()
+            cur  = conn.cursor()
+            cur.execute(
+                "SELECT p.Id, p.Name FROM B30BizDocSO b "
+                "LEFT OUTER JOIN B20Product p ON p.Id = b.ProductId "
+                "WHERE b.BizDocId = ?", (biz_doc_id,))
+            row = cur.fetchone()
+            conn.close()
+            self.after(0, lambda r=row: self._load_bom_project_for_order_done(biz_doc_id, r, None))
+        except Exception as e:
+            self.after(0, lambda err=e: self._load_bom_project_for_order_done(biz_doc_id, None, str(err)))
+
+    def _load_bom_project_for_order_done(self, biz_doc_id, row, error):
+        # Nếu user đã đổi Đơn hàng khác trong lúc query chạy → bỏ qua kết quả cũ
+        if biz_doc_id != self._bom_selected_order_id:
+            return
+        if error or not row or row[0] is None:
+            self._bom_selected_product_id = None
+            self.lbl_bom_project.configure(text="⚠ Không rõ")
+            return
+        self._bom_selected_product_id = row[0]
+        self.lbl_bom_project.configure(text=str(row[1] or '—'))
 
     def _bom_try_auto_select_order(self):
         """Khớp 'Đơn hàng' trong Excel header với dropdown.
@@ -8798,6 +8855,10 @@ class BOMToolApp(ctk.CTk):
                 return self._thdm_selected_order_id, 'ui_lookup'
             elif mac_dinh == 'period_id':
                 return self._thdm_selected_period_id, 'ui_lookup'
+            elif mac_dinh == 'bom_product_id':
+                # Dự án BOM Import — suy ra từ Đơn hàng đã chọn (xem
+                # _load_bom_project_for_order), không fuzzy_name Excel nữa
+                return self._bom_selected_product_id, 'ui_lookup'
             return None, 'ui_lookup'
 
         # ── SP / TinhToan: resolve trong pass 2 ──────────────────────────
