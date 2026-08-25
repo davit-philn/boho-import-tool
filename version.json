@@ -1,6 +1,6 @@
 {
-    "version": "2.2.6",
+    "version": "2.2.7",
     "release_date": "2026-08-25",
-    "download_url": "https://github.com/davit-philn/boho-import-tool/releases/download/v2.2.6/BOHO_IMPORT_BOM_THDM_v2.2.6_Portable.zip",
-    "release_notes": "Cai thien do chinh xac khi import BOM: tu nhan dien dung vat tu/ban thanh pham, giam gan nham ma. Du an tu dong lay theo Don hang, khong can chon tay."
+    "download_url": "https://github.com/davit-philn/boho-import-tool/releases/download/v2.2.7/BOHO_IMPORT_BOM_THDM_v2.2.7_Portable.zip",
+    "release_notes": "Thong bao/canh bao khi import de hieu hon, khong con thuat ngu ky thuat noi bo."
 }
