@@ -7335,7 +7335,7 @@ class BOMToolApp(ctk.CTk):
             cur  = conn.cursor()
             cur.execute(
                 f"SELECT TOP 200 LogTime, FileName, Action, TotalRows, Status, "
-                f"Detail, Computer, LoginUser "
+                f"Detail, Computer, LoginUser, AppVersion "
                 f"FROM {self.DB_LOG_TABLE} ORDER BY Id DESC")
             rows = cur.fetchall()
             conn.close()
@@ -7360,7 +7360,7 @@ class BOMToolApp(ctk.CTk):
             ts     = r[0].strftime("%Y-%m-%d %H:%M:%S") if r[0] else ''
             status = (r[4] or '').strip()
             tag    = 'ok' if status.upper() == 'OK' else 'err'
-            detail = f"{r[5] or ''}  [{r[6] or ''} / {r[7] or ''}]"
+            detail = f"{r[5] or ''}  [{r[6] or ''} / {r[7] or ''} / v{r[8] or '?'}]"
             self.log_tree.insert("", "end",
                 values=(ts, r[1] or '', r[2] or '', r[3] if r[3] is not None else '',
                         status, detail),
