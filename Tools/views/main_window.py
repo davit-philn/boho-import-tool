@@ -8039,6 +8039,12 @@ class BOMToolApp(ctk.CTk):
                         continue
                     if _r.get('kieu_lookup', '') not in ('fuzzy_code', 'fuzzy_name'):
                         continue
+                    # Đơn hàng đã chọn từ dropdown → khỏi đoán fuzzy, tránh hiện
+                    # popup dư thừa cho field mà Import thật sự sẽ bỏ qua bước này.
+                    if _r.get('sql_col', '') in ('ParentBizDocId', 'BizDocId_SO',
+                                                  'ParentDetailRowId_SO') \
+                            and self._bom_selected_order_id:
+                        continue
                     self._fuzzy_ctx = {
                         'section': 'HEADER', 'field': _r.get('sql_col', ''), 'row_idx': None}
                     self._resolve_header_field(
@@ -10152,6 +10158,12 @@ class BOMToolApp(ctk.CTk):
                         continue
                     if _r.get('kieu_lookup', '') not in ('fuzzy_code', 'fuzzy_name'):
                         continue
+                    # Đơn hàng đã chọn từ dropdown → khỏi đoán fuzzy, tránh hiện
+                    # popup dư thừa cho field mà Import thật sự sẽ bỏ qua bước này.
+                    if _r.get('sql_col', '') in ('ParentBizDocId', 'BizDocId_SO',
+                                                  'ParentDetailRowId_SO') \
+                            and self._bom_selected_order_id:
+                        continue
                     _cache_key_h = (_r.get('bang_master',''), _r.get('dieu_kien_master',''),
                                     _r.get('truong_so_sanh',''), _r.get('truong_lay_ve',''))
                     _cache_h = self._ps_header_caches.get(_cache_key_h, [])
@@ -10277,6 +10289,14 @@ class BOMToolApp(ctk.CTk):
                     if rec['nguon_dl'] == 'SP':
                         continue
                     sql_col = rec['sql_col']
+                    # Đơn hàng đã chọn chắc chắn từ dropdown UI → dùng thẳng cho
+                    # MỌI field liên quan (không chỉ ParentBizDocId), TRƯỚC khi
+                    # các field phụ thuộc (vd DetailRowId_SO = "Mục số|@ParentBizDocId")
+                    # đọc phải giá trị đoán fuzzy còn dang dở/sai.
+                    if sql_col in ('ParentBizDocId', 'BizDocId_SO', 'ParentDetailRowId_SO') \
+                            and self._bom_selected_order_id:
+                        row[sql_col] = self._bom_selected_order_id
+                        continue
                     val, mt = self._resolve_header_field(
                         rec, conn, meta, norm_meta,
                         self._ps_header_caches, now, row_out=row)
@@ -10284,10 +10304,6 @@ class BOMToolApp(ctk.CTk):
                     if mt not in ('codinh', 'hethong', 'excel_direct', 'sp',
                                   'tinhtoan', 'passthrough', 'fuzzy_pending'):
                         lookup_log[sql_col] = mt
-
-                # ParentBizDocId: user đã chọn từ dropdown → dùng trực tiếp, không qua fuzzy
-                if self._bom_selected_order_id:
-                    row['ParentBizDocId'] = self._bom_selected_order_id
 
                 # ── Giải quyết trường SP ─────────────────────────────────────
                 self.after(0, lambda: self._update_loading_msg(
