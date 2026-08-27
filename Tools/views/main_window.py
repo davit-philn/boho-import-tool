@@ -9262,7 +9262,11 @@ class BOMToolApp(ctk.CTk):
                         # tự dùng) — nếu nhiều mã trùng tên (dữ liệu cũ đã tạo
                         # rác) thì lấy mã mới nhất, không bỏ cuộc như popup thường.
                         raw = self._find_existing_btp_code(conn, item_code0, _ct_val) if _ct_val else None
-                    elif _vt_val:
+                    elif _vt_val and _vt_val not in {'_', '--', '-', 'x', 'n/a'}:
+                        # Placeholder ("_", "--"...) → coi như không có tên, bỏ
+                        # qua lookup — tránh chuẩn hóa ra chuỗi rỗng rồi khớp
+                        # substring với MỌI item (rỗng luôn là substring của
+                        # bất kỳ chuỗi nào) gây hòa điểm hàng loạt trong Tier 3.
                         nguong = int(rec.get('nguong_fuzzy', 0) or 0) or 92
                         self._fuzzy_ctx = {
                             'section': bom_section,
@@ -9504,10 +9508,20 @@ class BOMToolApp(ctk.CTk):
 
             _btp_stt_set = set()
             if section == 'BOM2' and stt_col is not None:
+                _norm_tvt = _norm_vn('Tên vật tư')
                 _ten_vt_col = next(
-                    (c for c in df.columns if _norm_vn(str(c)) == _norm_vn('Tên vật tư')),
+                    (c for c in df.columns if _norm_vn(str(c)) == _norm_tvt),
                     None)
+                if _ten_vt_col is None:
+                    # Pass 2: suffix match — cột bị merge header cha (vd
+                    # "SLg_Tên_Vật_Tư"), đồng nhất với logic ở _resolve_detail_row.
+                    _ten_vt_col = next(
+                        (c for c in df.columns
+                         if _norm_vn(str(c)).endswith(_norm_tvt)
+                         and len(_norm_vn(str(c))) > len(_norm_tvt)),
+                        None)
                 if _ten_vt_col is not None:
+                    _PLACEHOLDER_VALS = {'_', '--', '-', 'x', 'n/a'}
                     _stt_seq = [_get_stt_pre(df.iloc[_i].get(stt_col)) for _i in range(len(df))]
                     for _i, _s in enumerate(_stt_seq):
                         if not _s or '.' in _s or not _s.replace('.', '', 1).isdigit():
@@ -9515,7 +9529,8 @@ class BOMToolApp(ctk.CTk):
                         _vt_raw = df.iloc[_i].get(_ten_vt_col)
                         _vt_empty = (_vt_raw is None
                                      or (isinstance(_vt_raw, float) and _math.isnan(_vt_raw))
-                                     or str(_vt_raw).strip() in ('', 'nan'))
+                                     or str(_vt_raw).strip().lower() in ('', 'nan')
+                                     or str(_vt_raw).strip() in _PLACEHOLDER_VALS)
 
                         # Rule 2: STT nguyên + Tên vật tư chứa "+" (ghép nhiều vật liệu)
                         if not _vt_empty and '+' in str(_vt_raw):
