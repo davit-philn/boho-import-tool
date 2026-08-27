@@ -17,7 +17,7 @@ import subprocess
 from typing import Callable, Optional
 
 # ── Constants ────────────────────────────────────────────────────────────────
-CURRENT_VERSION = "2.2.10"   # auto-updated by build.py
+CURRENT_VERSION = "2.2.11"   # auto-updated by build.py
 
 VERSION_URL = (
     "https://raw.githubusercontent.com/davit-philn/"
@@ -33,11 +33,31 @@ def _ver_tuple(v: str):
         return (0,)
 
 
+def _app_dir() -> str:
+    if getattr(sys, "frozen", False):
+        return os.path.dirname(sys.executable)
+    return os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+
+
+def _log_check(msg: str):
+    """Ghi đè log chẩn đoán lần check gần nhất (cạnh exe) — để debug máy
+    không tự cập nhật được mà không cần rebuild lại app để thêm log."""
+    try:
+        import datetime
+        ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        log_path = os.path.join(_app_dir(), "update_check.log")
+        with open(log_path, "w", encoding="utf-8") as f:
+            f.write(f"[{ts}] {msg}\n")
+    except Exception:
+        pass
+
+
 # ── Public API ───────────────────────────────────────────────────────────────
 def check_update_async(callback: Callable[[Optional[dict]], None]):
     """
     Kiểm tra bản mới trong background thread (không block UI).
     callback(info)  — info = dict nếu có bản mới, None nếu đã mới nhất hoặc lỗi.
+    Luôn ghi log chẩn đoán (OK hoặc lỗi thật) vào update_check.log cạnh exe.
     """
     import urllib.request
 
@@ -51,11 +71,14 @@ def check_update_async(callback: Callable[[Optional[dict]], None]):
                 data = json.loads(resp.read().decode("utf-8"))
             remote = data.get("version", "0")
             if _ver_tuple(remote) > _ver_tuple(CURRENT_VERSION):
+                _log_check(f"OK - co ban moi {remote} (dang chay {CURRENT_VERSION})")
                 callback(data)
             else:
+                _log_check(f"OK - da la ban moi nhat ({CURRENT_VERSION})")
                 callback(None)
-        except Exception:
-            callback(None)   # silent fail — không làm phiền user nếu offline
+        except Exception as e:
+            _log_check(f"LOI: {type(e).__name__}: {e}")
+            callback(None)   # silent fail phía UI — không làm phiền user nếu offline
 
     threading.Thread(target=_worker, daemon=True).start()
 
