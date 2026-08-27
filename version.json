@@ -1,6 +1,6 @@
 {
-    "version": "2.2.8",
-    "release_date": "2026-08-26",
-    "download_url": "https://github.com/davit-philn/boho-import-tool/releases/download/v2.2.8/BOHO_IMPORT_BOM_THDM_v2.2.8_Portable.zip",
-    "release_notes": "Bo sung mapping luu ma don hang lien ket (ParentDetailRowId_SO) vao BOM header."
+    "version": "2.2.9",
+    "release_date": "2026-08-27",
+    "download_url": "https://github.com/davit-philn/boho-import-tool/releases/download/v2.2.9/BOHO_IMPORT_BOM_THDM_v2.2.9_Portable.zip",
+    "release_notes": "Fix loi Don hang khong ra ma khi da chon dropdown; fix BOM2 roi het vao ma tam MKT voi 1 so file Excel co cau truc cot khac."
 }
