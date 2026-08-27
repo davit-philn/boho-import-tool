@@ -9123,14 +9123,28 @@ class BOMToolApp(ctk.CTk):
                             _parts.append(str(_pv or '').strip())
                             if _pv is not None: _any = True
                         else:
-                            _pv, _nt = None, _norm_vn(_t)
+                            _pv, _nt, _mc = None, _norm_vn(_t), None
+                            # Pass 1: exact hoặc norm-exact match
                             for _c in df_row.index:
                                 _cs = str(_c).strip()
                                 if _cs == _t or _norm_vn(_cs) == _nt:
                                     _v2 = df_row[_c]
+                                    _mc = _c
                                     if _v2 is not None and not (isinstance(_v2, float) and _math.isnan(_v2)):
                                         _pv = _v2
                                     break
+                            # Pass 2: suffix match — cột bị merge header cha
+                            # (vd "SLg_Tên_Vật_Tư" khớp "Tên vật tư"), đồng nhất
+                            # với logic single-field bên dưới.
+                            if _mc is None and _nt:
+                                for _c in df_row.index:
+                                    _norm_c = _norm_vn(str(_c).strip())
+                                    if _norm_c.endswith(_nt) and len(_norm_c) > len(_nt):
+                                        _v2 = df_row[_c]
+                                        _mc = _c
+                                        if _v2 is not None and not (isinstance(_v2, float) and _math.isnan(_v2)):
+                                            _pv = _v2
+                                        break
                             _parts.append(str(_pv or '').strip())
                             if _pv is not None: _any = True
                     raw = tuple(_parts) if _any else None
