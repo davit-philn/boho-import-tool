@@ -256,10 +256,11 @@ class BOMToolApp(ctk.CTk):
                 try:
                     zip_path = _updater.download_update(url, _progress)
                     dlg.after(0, lambda z=zip_path: _apply(z))
-                except Exception:
+                except Exception as e:
+                    _err_txt = f"{type(e).__name__}: {e}"[:200]
                     dlg.after(0, lambda: (
                         btn.configure(state="normal", text="❌  Tải thất bại — Thử lại"),
-                        lbl_status.configure(text="Lỗi khi tải. Kiểm tra kết nối mạng."),
+                        lbl_status.configure(text=f"Lỗi khi tải: {_err_txt}"),
                     ))
 
             threading.Thread(target=_worker, daemon=True).start()
