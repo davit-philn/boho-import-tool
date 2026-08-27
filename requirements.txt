@@ -8,6 +8,7 @@ Pillow>=10.0
 openpyxl
 pyodbc
 rapidfuzz
+certifi          # CA bundle riêng cho auto-update (tránh CERTIFICATE_VERIFY_FAILED)
 
 # --- Tuỳ chọn (có thì dùng, không có cũng chạy được) ---
 tksheet          # bảng tính nhanh hơn trong tab; nếu thiếu tự fallback sang ttk.Treeview

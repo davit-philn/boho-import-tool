@@ -1,6 +1,6 @@
 {
-    "version": "2.2.11",
+    "version": "2.2.12",
     "release_date": "2026-08-27",
-    "download_url": "https://github.com/davit-philn/boho-import-tool/releases/download/v2.2.11/BOHO_IMPORT_BOM_THDM_v2.2.11_Portable.zip",
-    "release_notes": "Ghi log chan doan (update_check.log canh exe) khi kiem tra ban moi that bai, de xac dinh nguyen nhan tren may khong tu cap nhat duoc."
+    "download_url": "https://github.com/davit-philn/boho-import-tool/releases/download/v2.2.12/BOHO_IMPORT_BOM_THDM_v2.2.12_Portable.zip",
+    "release_notes": "Fix loi CERTIFICATE_VERIFY_FAILED khi tu dong cap nhat tren mot so may (dung CA bundle rieng, khong phu thuoc kho chung chi Windows)."
 }

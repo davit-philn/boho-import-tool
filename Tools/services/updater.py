@@ -17,7 +17,7 @@ import subprocess
 from typing import Callable, Optional
 
 # ── Constants ────────────────────────────────────────────────────────────────
-CURRENT_VERSION = "2.2.11"   # auto-updated by build.py
+CURRENT_VERSION = "2.2.12"   # auto-updated by build.py
 
 VERSION_URL = (
     "https://raw.githubusercontent.com/davit-philn/"
@@ -52,6 +52,20 @@ def _log_check(msg: str):
         pass
 
 
+def _ssl_context():
+    """SSL context dùng CA bundle của certifi (đóng gói kèm app) thay vì phụ
+    thuộc kho chứng chỉ Windows của máy — tránh CERTIFICATE_VERIFY_FAILED /
+    "unable to get local issuer certificate" khi máy chưa cache đủ root cert
+    (đã gặp thực tế: PowerShell/trình duyệt cùng máy verify OK nhưng app thì
+    không, vì không tự trigger AIA fetch như native Windows networking)."""
+    import ssl
+    try:
+        import certifi
+        return ssl.create_default_context(cafile=certifi.where())
+    except Exception:
+        return ssl.create_default_context()
+
+
 # ── Public API ───────────────────────────────────────────────────────────────
 def check_update_async(callback: Callable[[Optional[dict]], None]):
     """
@@ -67,7 +81,7 @@ def check_update_async(callback: Callable[[Optional[dict]], None]):
                 VERSION_URL,
                 headers={"User-Agent": f"BOHO-IMPORT-BOM/{CURRENT_VERSION}"},
             )
-            with urllib.request.urlopen(req, timeout=6) as resp:
+            with urllib.request.urlopen(req, timeout=6, context=_ssl_context()) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
             remote = data.get("version", "0")
             if _ver_tuple(remote) > _ver_tuple(CURRENT_VERSION):
@@ -101,7 +115,7 @@ def download_update(
     req = urllib.request.Request(
         url, headers={"User-Agent": f"BOHO-IMPORT-BOM/{CURRENT_VERSION}"}
     )
-    with urllib.request.urlopen(req, timeout=120) as resp:
+    with urllib.request.urlopen(req, timeout=120, context=_ssl_context()) as resp:
         total = int(resp.headers.get("Content-Length", 0))
         downloaded = 0
         with open(zip_path, "wb") as f:

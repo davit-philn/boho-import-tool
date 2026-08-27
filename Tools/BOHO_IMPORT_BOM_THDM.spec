@@ -47,6 +47,14 @@ datas         += tmp_ret[0]
 binaries      += tmp_ret[1]
 hiddenimports += tmp_ret[2]
 
+# certifi: cacert.pem — auto-update dùng CA bundle riêng, không phụ thuộc kho
+# chứng chỉ Windows của máy (tránh CERTIFICATE_VERIFY_FAILED khi máy thiếu/
+# chưa cache root cert cần thiết).
+tmp_ret = collect_all('certifi')
+datas         += tmp_ret[0]
+binaries      += tmp_ret[1]
+hiddenimports += tmp_ret[2]
+
 # tksheet: liệt kê tường minh từng submodule để PyInstaller compile vào PYZ
 hiddenimports += [
     'tksheet',
