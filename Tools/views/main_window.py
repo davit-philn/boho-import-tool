@@ -9797,12 +9797,14 @@ class BOMToolApp(ctk.CTk):
                         # usp_B20BOM_Create_ItemCode tự loại dòng có ItemName
                         # khác rỗng (DELETE FROM #ItemList WHERE ... ItemName<>''
                         # ...) TRƯỚC khi ghi đè ItemName=Name — nên dòng BTP dạng
-                        # "+" ghép nhiều vật liệu (ItemName/Tên vật tư là chuỗi
-                        # ghép, không rỗng) bị SP âm thầm bỏ qua, không tạo mã.
-                        # Gửi rỗng CHỈ trong XML này để SP nhận đúng — row_vals
-                        # (dùng cho INSERT thật ở Pha 3) không bị đụng, vẫn giữ
-                        # nguyên text mô tả gốc để hiển thị trên Bravo.
-                        if field == 'ItemName' and isinstance(_fval, str) and '+' in _fval:
+                        # "+" ghép nhiều vật liệu HOẶC placeholder ("_", "-"...)
+                        # (ItemName/Tên vật tư khác rỗng) bị SP âm thầm bỏ qua,
+                        # không tạo mã. Gửi rỗng CHỈ trong XML này để SP nhận
+                        # đúng — row_vals (dùng cho INSERT thật ở Pha 3) không
+                        # bị đụng, vẫn giữ nguyên text mô tả gốc để hiển thị
+                        # trên Bravo.
+                        if field == 'ItemName' and isinstance(_fval, str) and \
+                                ('+' in _fval or _fval.strip() in {'_', '--', '-', 'x', 'n/a'}):
                             _fval = ''
                         attrs.append(f'{field}="{_xml_escape(_fval)}"')
                     parts.append(f'  <{xml_tag} {" ".join(attrs)} />')
