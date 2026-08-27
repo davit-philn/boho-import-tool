@@ -9483,11 +9483,16 @@ class BOMToolApp(ctk.CTk):
             resolved_rows = []
 
             # ── BTP detection (chỉ BOM2) ─────────────────────────────────────
-            # 2 rule độc lập, cùng đánh dấu STT nguyên (không phần thập phân)
-            # là BTP — không phải NVL đơn:
-            #   1. Tên vật tư RỖNG ở chính dòng đó + có ít nhất 1 dòng con thập
-            #      phân (X.1, X.2...) ngay bên dưới → "chi tiết tổ hợp" tách
-            #      thành các dòng con.
+            # 2 rule độc lập đánh dấu 1 STT là BTP — không phải NVL đơn:
+            #   1. Tên vật tư RỖNG ở chính dòng đó, VÀ (có Tên chi tiết để đặt
+            #      tên cho mã mới HOẶC có ít nhất 1 dòng con thập phân (X.1,
+            #      X.2...) ngay bên dưới) — chỉ cần 1 trong 2 điều kiện sau là
+            #      đủ. Áp dụng ĐỆ QUY mọi tầng (1 → 1.1 → 1.1.1...), không chỉ
+            #      STT nguyên. Ví dụ: 1.17 rỗng, không con, nhưng có Tên chi
+            #      tiết → vẫn là BTP. 1 rỗng, không Tên chi tiết, nhưng có con
+            #      1.1/1.2 → vẫn là BTP (giữ hành vi cũ). Dòng rỗng cả Tên vật
+            #      tư lẫn Tên chi tiết VÀ không con → bị loại (không đủ dữ
+            #      liệu để tạo mã, coi là thiếu nhập liệu, không phải BTP).
             #   2. Tên vật tư chứa dấu "+" (ghép nhiều vật liệu vào 1 ô, vd
             #      "MDF... + Tấm chống cháy... + ...") → vật liệu ghép/dán
             #      thành 1 tấm composite trước khi cắt, không lookup được
@@ -9521,10 +9526,21 @@ class BOMToolApp(ctk.CTk):
                          and len(_norm_vn(str(c))) > len(_norm_tvt)),
                         None)
                 if _ten_vt_col is not None:
+                    _norm_tct = _norm_vn('Tên chi tiết')
+                    _ten_ct_col = next(
+                        (c for c in df.columns if _norm_vn(str(c)) == _norm_tct),
+                        None)
+                    if _ten_ct_col is None:
+                        _ten_ct_col = next(
+                            (c for c in df.columns
+                             if _norm_vn(str(c)).endswith(_norm_tct)
+                             and len(_norm_vn(str(c))) > len(_norm_tct)),
+                            None)
+
                     _PLACEHOLDER_VALS = {'_', '--', '-', 'x', 'n/a'}
                     _stt_seq = [_get_stt_pre(df.iloc[_i].get(stt_col)) for _i in range(len(df))]
                     for _i, _s in enumerate(_stt_seq):
-                        if not _s or '.' in _s or not _s.replace('.', '', 1).isdigit():
+                        if not _s or not NUMERIC_STT_PATTERN.match(_s):
                             continue
                         _vt_raw = df.iloc[_i].get(_ten_vt_col)
                         _vt_empty = (_vt_raw is None
@@ -9532,21 +9548,27 @@ class BOMToolApp(ctk.CTk):
                                      or str(_vt_raw).strip().lower() in ('', 'nan')
                                      or str(_vt_raw).strip() in _PLACEHOLDER_VALS)
 
-                        # Rule 2: STT nguyên + Tên vật tư chứa "+" (ghép nhiều vật liệu)
-                        if not _vt_empty and '+' in str(_vt_raw):
+                        # Rule 2: CHỈ STT nguyên (không thập phân) + Tên vật tư chứa "+"
+                        if '.' not in _s and not _vt_empty and '+' in str(_vt_raw):
                             _btp_stt_set.add(_s)
                             continue
 
-                        # Rule 1: STT nguyên + rỗng + có con thập phân
+                        # Rule 1: Tên vật tư rỗng + (có Tên chi tiết để đặt tên mã mới
+                        # HOẶC có dòng con bên dưới — chỉ cần 1 trong 2 là đủ, mọi tầng).
                         if not _vt_empty:
                             continue
+                        _ct_raw = df.iloc[_i].get(_ten_ct_col) if _ten_ct_col is not None else None
+                        _ct_empty = (_ct_raw is None
+                                     or (isinstance(_ct_raw, float) and _math.isnan(_ct_raw))
+                                     or str(_ct_raw).strip().lower() in ('', 'nan')
+                                     or str(_ct_raw).strip() in _PLACEHOLDER_VALS)
                         _has_child = False
                         for _ns in _stt_seq[_i + 1:]:
                             if _ns.startswith(_s + '.'):
                                 _has_child = True
                             else:
                                 break
-                        if _has_child:
+                        if not _ct_empty or _has_child:
                             _btp_stt_set.add(_s)
 
 

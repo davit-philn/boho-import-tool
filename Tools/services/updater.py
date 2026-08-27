@@ -17,7 +17,7 @@ import subprocess
 from typing import Callable, Optional
 
 # ── Constants ────────────────────────────────────────────────────────────────
-CURRENT_VERSION = "2.2.9"   # auto-updated by build.py
+CURRENT_VERSION = "2.2.10"   # auto-updated by build.py
 
 VERSION_URL = (
     "https://raw.githubusercontent.com/davit-philn/"

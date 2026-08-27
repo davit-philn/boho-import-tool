@@ -1,6 +1,6 @@
 {
-    "version": "2.2.9",
+    "version": "2.2.10",
     "release_date": "2026-08-27",
-    "download_url": "https://github.com/davit-philn/boho-import-tool/releases/download/v2.2.9/BOHO_IMPORT_BOM_THDM_v2.2.9_Portable.zip",
-    "release_notes": "Fix loi Don hang khong ra ma khi da chon dropdown; fix BOM2 roi het vao ma tam MKT voi 1 so file Excel co cau truc cot khac."
+    "download_url": "https://github.com/davit-philn/boho-import-tool/releases/download/v2.2.10/BOHO_IMPORT_BOM_THDM_v2.2.10_Portable.zip",
+    "release_notes": "Fix nhan dien BTP/NVL o BOM2: bat placeholder cac tang thap phan, khong chi tang STT nguyen; bat them TH rong khong co dong con nhung co Ten chi tiet."
 }
