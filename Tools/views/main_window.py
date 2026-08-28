@@ -40,7 +40,8 @@ from services.utils import (
 )
 from services.mapping_loader import (
     load_mapping, build_reverse_map, match_col_to_sql,
-    build_meta_keys_from_mapping, _load_section_rows, _load_config,
+    build_meta_keys_from_mapping, build_cell_specs_from_mapping,
+    _load_section_rows, _load_config,
 )
 from services.bom_parser import (
     parse_bom_file, _parse_sheet, _parse_section_excel_rows,
@@ -7552,6 +7553,7 @@ class BOMToolApp(ctk.CTk):
 
         def worker():
             mk = build_meta_keys_from_mapping(self.mapping)
+            cs = build_cell_specs_from_mapping(self.mapping)
             results = []
             for path in paths:
                 try:
@@ -7571,7 +7573,7 @@ class BOMToolApp(ctk.CTk):
                         continue
 
                     tables, meta, skipped, warns = parse_bom_file(
-                        path, meta_keys=mk, _decrypted_bytes=decrypted)
+                        path, meta_keys=mk, cell_specs=cs, _decrypted_bytes=decrypted)
                     val_errors = validate_layer1(tables, meta, self.mapping)
                     n_err, n_wrn = count_errors(val_errors)
                     results.append({
@@ -7885,8 +7887,9 @@ class BOMToolApp(ctk.CTk):
                     return
 
                 mk     = build_meta_keys_from_mapping(self.mapping)
+                cs     = build_cell_specs_from_mapping(self.mapping)
                 tables, meta, skipped, warns = parse_bom_file(
-                    path, meta_keys=mk, _decrypted_bytes=decrypted)
+                    path, meta_keys=mk, cell_specs=cs, _decrypted_bytes=decrypted)
                 self.tables        = tables
                 self.global_meta   = meta
                 self._current_file = path
@@ -8896,10 +8899,24 @@ class BOMToolApp(ctk.CTk):
         elif nguon in ('SP', 'TinhToan'):
             return None, nguon.lower()
 
-        # ── Excel: đọc meta, lookup master nếu cần ───────────────────────────
+        # ── Excel / ExcelCell: đọc meta, lookup master nếu cần ───────────────
         else:
             raw = None
-            if ten_excel:
+            if nguon == 'ExcelCell' and ten_excel:
+                # Ten_Excel = "<toa_do>|<nhan_fallback>" — ưu tiên đọc theo
+                # tọa độ ô cố định (đã bơm sẵn vào meta lúc parse qua
+                # cell_specs, xem build_cell_specs_from_mapping); ô đó rỗng
+                # thì fallback quét nhãn (phần sau |) như field Excel thường.
+                for _p in [p.strip() for p in ten_excel.split('|')]:
+                    if not _p:
+                        continue
+                    _v = meta.get(_p)
+                    if _v is None:
+                        _v = norm_meta.get(_norm_vn(_p))
+                    if _v is not None and str(_v).strip():
+                        raw = _v
+                        break
+            elif ten_excel:
                 if '|' in ten_excel:
                     # Multi-field: mỗi phần tách bởi | → build tuple để AND lookup
                     # @FieldName → lấy từ row_out (field đã resolve trước đó trong cùng header)

@@ -1,6 +1,6 @@
 {
-    "version": "2.2.12",
-    "release_date": "2026-08-27",
-    "download_url": "https://github.com/davit-philn/boho-import-tool/releases/download/v2.2.12/BOHO_IMPORT_BOM_THDM_v2.2.12_Portable.zip",
-    "release_notes": "Fix loi CERTIFICATE_VERIFY_FAILED khi tu dong cap nhat tren mot so may (dung CA bundle rieng, khong phu thuoc kho chung chi Windows)."
+    "version": "2.2.13",
+    "release_date": "2026-08-28",
+    "download_url": "https://github.com/davit-philn/boho-import-tool/releases/download/v2.2.13/BOHO_IMPORT_BOM_THDM_v2.2.13_Portable.zip",
+    "release_notes": "So luong BOM: doc theo o nhap lai so luong SP theo don hang (uu tien), rong thi fallback ve o So luong nhu cu."
 }

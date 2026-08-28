@@ -230,10 +230,21 @@ def build_meta_keys_from_mapping(mapping):
     """
     keys = {}
     for rec in mapping.get('HEADER', []):
-        if rec.get('nguon_dl') != 'Excel':
-            continue
+        nguon = rec.get('nguon_dl')
         ten = rec.get('ten_excel', '').strip()
         if not ten:
+            continue
+        if nguon == 'ExcelCell':
+            # Ten_Excel = "<toa_do>|<nhan_fallback>" — phần đầu là tọa độ ô,
+            # đọc riêng qua build_cell_specs_from_mapping (không phải nhãn).
+            # Phần sau (nếu có) là nhãn fallback — vẫn đăng ký quét như Excel
+            # thường để dùng khi ô tọa độ rỗng.
+            for part in ten.split('|')[1:]:
+                part = part.strip()
+                if part and not part.startswith('@'):
+                    keys[part] = re.escape(part)
+            continue
+        if nguon != 'Excel':
             continue
         if '|' in ten:
             # Multi-field: đăng ký từng phần riêng (bỏ @FieldName vì đó là ref parent_row)
@@ -244,6 +255,24 @@ def build_meta_keys_from_mapping(mapping):
         else:
             keys[ten] = re.escape(ten)
     return keys if keys else META_KEYS
+
+
+def build_cell_specs_from_mapping(mapping, section='HEADER'):
+    """
+    Trả về set tọa độ ô (vd {'Y3'}) cần đọc trực tiếp — dùng cho field khai
+    Nguon_DL=ExcelCell, phần trước dấu '|' trong Ten_Excel là tọa độ ô.
+    """
+    specs = set()
+    for rec in mapping.get(section, []):
+        if rec.get('nguon_dl') != 'ExcelCell':
+            continue
+        ten = rec.get('ten_excel', '').strip()
+        if not ten:
+            continue
+        coord = ten.split('|')[0].strip()
+        if coord:
+            specs.add(coord)
+    return specs
 
 HEADER_ANCHORS    = ["MÃ SP", "STT", "Tên chi tiết", "Tên Vật Tư", "Mã chi tiết", "Mã vật tư"]
 SECTION_STT_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9]*(\.[0-9]+)?\.?$")  # A, B, E1, E2, I., II., III., A.1...

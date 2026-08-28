@@ -30,11 +30,13 @@ except ImportError:
 from services.utils import _norm_vn, _nan_str, guess_col_align, THEMES
 from services.mapping_loader import (
     load_mapping, build_reverse_map, match_col_to_sql,
-    build_meta_keys_from_mapping, _load_section_rows,
+    build_meta_keys_from_mapping, build_cell_specs_from_mapping,
+    _load_section_rows,
     MAPPING_FILE, BASE_DIR,
     SECTION_STT_PATTERN, NUMERIC_STT_PATTERN, _ROMAN_SIMPLE_RE,
     HEADER_ANCHORS,
 )
+from openpyxl.utils.cell import coordinate_from_string, column_index_from_string
 _log = logging.getLogger(__name__)
 
 def _is_roman_numeral(s: str) -> bool:
@@ -179,6 +181,30 @@ def _extract_meta(rows, meta_keys=None):
                             break
                     break
     return meta
+
+def _extract_cell_meta(rows, cell_specs):
+    """
+    Đọc trực tiếp giá trị theo tọa độ ô cố định (vd 'Y3') — dùng cho field
+    khai Nguon_DL=ExcelCell trong mapping (bỏ qua quét-theo-nhãn, đọc thẳng
+    tọa độ vì nhãn thật của ô đó quá dài / không nằm cùng hàng với giá trị).
+    Trả về {coord: value} (chỉ với ô có giá trị thực).
+    """
+    result = {}
+    if not cell_specs:
+        return result
+    for coord in cell_specs:
+        try:
+            col_letters, row_num = coordinate_from_string(coord)
+            r_idx = row_num - 1
+            c_idx = column_index_from_string(col_letters) - 1
+        except ValueError:
+            continue
+        if 0 <= r_idx < len(rows):
+            row = rows[r_idx]
+            if 0 <= c_idx < len(row) and row[c_idx] is not None and str(row[c_idx]).strip():
+                result[coord] = row[c_idx]
+    return result
+
 
 def _find_header_row(rows):
     for i, row in enumerate(rows):
@@ -428,7 +454,7 @@ def _run_row_sp_hooks(conn, hooks, row_vals, log_fn=None):
             if log_fn:
                 log_fn(f'SP_HOOK {hook.get("sp_name")} warn: {eh}')
 
-def _parse_sheet(ws, sheet_name, live_meta_rows=None, meta_keys=None, hidden_rows=None, hidden_cols=None, sheet_config=None):
+def _parse_sheet(ws, sheet_name, live_meta_rows=None, meta_keys=None, cell_specs=None, hidden_rows=None, hidden_cols=None, sheet_config=None):
     # Bỏ qua các row/col bị ẩn (hidden) trong Excel
     # hidden_rows: set of 1-based row indices
     # hidden_cols: set of 0-based col indices
@@ -455,6 +481,7 @@ def _parse_sheet(ws, sheet_name, live_meta_rows=None, meta_keys=None, hidden_row
     # Dùng live_meta_rows (data_only=False) để đọc đúng giá trị formula cells
     meta_rows = live_meta_rows if live_meta_rows is not None else all_rows[:15]
     meta = _extract_meta(meta_rows, meta_keys=meta_keys)
+    meta.update(_extract_cell_meta(meta_rows, cell_specs))
     hidx = _find_header_row(all_rows[:15])
 
     if hidx is None:
@@ -676,10 +703,12 @@ def _is_encrypted_excel(filepath):
         return False
 
 
-def parse_bom_file(filepath, meta_keys=None, _decrypted_bytes=None):
+def parse_bom_file(filepath, meta_keys=None, cell_specs=None, _decrypted_bytes=None):
     """
     Parse file BOM Excel.
     meta_keys: {label: regex} từ build_meta_keys_from_mapping() — None → dùng META_KEYS.
+    cell_specs: set tọa độ ô (vd {'Y3'}) từ build_cell_specs_from_mapping() — field
+        Nguon_DL=ExcelCell, đọc trực tiếp theo tọa độ thay vì quét nhãn.
     _decrypted_bytes: BytesIO đã giải mã (truyền vào nếu file có mật khẩu).
     Trả về: (tables_dict, global_meta, skipped_sheets, warnings)
     tables_dict = { label: {df, type, warnings} }
@@ -747,7 +776,7 @@ def parse_bom_file(filepath, meta_keys=None, _decrypted_bytes=None):
             cached_raw = list(wb[name].iter_rows(min_row=1, max_row=15, values_only=True))
             live_meta_rows = _merge_meta_rows(live_raw, cached_raw)
 
-        res = _parse_sheet(wb[name], name, live_meta_rows=live_meta_rows, meta_keys=meta_keys, hidden_rows=_hidden_rows_map.get(name), hidden_cols=_hidden_cols_map.get(name), sheet_config=sheet_cfg)
+        res = _parse_sheet(wb[name], name, live_meta_rows=live_meta_rows, meta_keys=meta_keys, cell_specs=cell_specs, hidden_rows=_hidden_rows_map.get(name), hidden_cols=_hidden_cols_map.get(name), sheet_config=sheet_cfg)
         if res:
             parsed.append(res)
             # first-wins: sheet đầu tiên set giá trị, sheet sau không ghi đè
