@@ -9232,6 +9232,18 @@ class BOMToolApp(ctk.CTk):
                         raw = int(float(qs)) if qs else None
                     except (ValueError, TypeError): raw = None
 
+                # Biến_đổi (UPPER/LOWER/TRIM) — đồng nhất với _resolve_row_mapping
+                # (dùng cho THDM); BOM trước đây không đọc cột này dù đã khai báo
+                # (vd Unit/ĐVT ở BOM2/3/4/5).
+                if isinstance(raw, str):
+                    _bien_doi = _nan_str(rec.get('bien_doi', '')).strip().upper()
+                    if _bien_doi == 'UPPER':
+                        raw = raw.upper()
+                    elif _bien_doi == 'LOWER':
+                        raw = raw.lower()
+                    elif _bien_doi == 'TRIM':
+                        raw = raw.strip()
+
             # Lookup master nếu có (cùng engine với HEADER)
             if kl and ss and lv:
                 if kl.lower() == 'code_then_name' and isinstance(raw, tuple):
