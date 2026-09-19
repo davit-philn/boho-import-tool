@@ -1,6 +1,6 @@
 {
-    "version": "2.2.14",
-    "release_date": "2026-09-03",
-    "download_url": "https://github.com/davit-philn/boho-import-tool/releases/download/v2.2.14/BOHO_IMPORT_BOM_THDM_v2.2.14_Portable.zip",
-    "release_notes": "Fix Bien_doi=UPPER/LOWER/TRIM da khai bao (vd Unit/DVT) khong co tac dung o BOM (chi THDM chay dung), gio BOM cung ap dung dung."
+    "version": "2.2.15",
+    "release_date": "2026-09-19",
+    "download_url": "https://github.com/davit-philn/boho-import-tool/releases/download/v2.2.15/BOHO_IMPORT_BOM_THDM_v2.2.15_Portable.zip",
+    "release_notes": "Fix loi nghiem trong: tu 'duyet' trong FOOTER_KEYWORDS qua chung chung, khop nham ghi chu binh thuong (vd 'theo mau duyet') lam mat toan bo du lieu cac dong phia sau trong sheet."
 }

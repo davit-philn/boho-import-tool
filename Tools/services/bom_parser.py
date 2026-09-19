@@ -46,7 +46,11 @@ def _is_roman_numeral(s: str) -> bool:
     m = _ROMAN_SIMPLE_RE.match(s)
     return bool(m) and bool(m.group(0).rstrip('.'))
 FOOTER_KEYWORDS   = ["Tổng cộng", "Kiểm duyệt", "Người Lập", "Người lập", "*Ghi chú", "Ghi chú:",
-                     "Ngày tháng năm", "Ngày   tháng", "duyệt", "Ghi chú cuối"]
+                     "Ngày tháng năm", "Ngày   tháng", "Ghi chú cuối"]
+# "duyệt" đứng riêng ĐÃ BỊ BỎ (từng gây false-positive): khớp cả câu ghi chú
+# nghiệp vụ bình thường như "theo mẫu duyệt" trong 1 dòng dữ liệu thật, khiến
+# toàn bộ các dòng phía sau bị coi là footer và bỏ qua vĩnh viễn. "Kiểm duyệt"
+# (cụm từ cụ thể hơn, chỉ xuất hiện ở khối chữ ký) vẫn đủ để nhận diện footer thật.
 # Pattern nhận diện dòng ký tên: STT trống + cột số có text dài
 _SIGNER_COL_RE    = re.compile(r"(DAI|DAY|RONG|Width|Length|Thickness)", re.IGNORECASE)
 
