@@ -1,6 +1,6 @@
 {
-    "version": "2.2.15",
+    "version": "2.2.16",
     "release_date": "2026-09-19",
-    "download_url": "https://github.com/davit-philn/boho-import-tool/releases/download/v2.2.15/BOHO_IMPORT_BOM_THDM_v2.2.15_Portable.zip",
-    "release_notes": "Fix loi nghiem trong: tu 'duyet' trong FOOTER_KEYWORDS qua chung chung, khop nham ghi chu binh thuong (vd 'theo mau duyet') lam mat toan bo du lieu cac dong phia sau trong sheet."
+    "download_url": "https://github.com/davit-philn/boho-import-tool/releases/download/v2.2.16/BOHO_IMPORT_BOM_THDM_v2.2.16_Portable.zip",
+    "release_notes": "Fix BOM2: dong con (X.1, X.2...) rong Ten vat tu nhung dong cha da co gia tri that (vd manh cat cung 1 loai vai/tam) bi nham thanh BTP - gio ke thua vat tu tu dong cha, tra NVL binh thuong."
 }

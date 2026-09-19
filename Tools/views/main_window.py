@@ -9068,7 +9068,7 @@ class BOMToolApp(ctk.CTk):
     def _resolve_detail_row(self, mapping_recs, df_row, parent_row, conn,
                             detail_caches, now, builtin_order, bom_detail_type,
                             sp_cfgs=None, bom_section='', is_btp_row=False,
-                            item_code0=None):
+                            item_code0=None, inherited_vt=None):
         """
         Resolve một hàng DataFrame (BOM2/3/4) → dict {sql_col: value}.
         - mapping_recs : list record từ mapping sheet BOM2/3/4
@@ -9080,6 +9080,9 @@ class BOMToolApp(ctk.CTk):
                          Tên vật tư rỗng + có con) — dùng cho kieu_lookup=nvl_or_btp
         - item_code0   : Code của B20Item ứng với ItemId0 (sản phẩm cha) — dùng
                          để scope khi tái dùng mã BTP đã tạo trước đó
+        - inherited_vt : Tên vật tư kế thừa từ dòng cha (khi dòng này rỗng Tên
+                         vật tư nhưng dòng cha đã có giá trị thật — dùng cho
+                         kieu_lookup=nvl_or_btp khi is_btp_row=False)
         """
         import datetime as _dt
         import math as _math
@@ -9304,6 +9307,19 @@ class BOMToolApp(ctk.CTk):
                         }
                         raw, _ = self._lookup_generic(
                             _vt_val, _name_cache, 'fuzzy_name', nguong,
+                            _cache_key=(bm, dk, ss, lv))
+                    elif inherited_vt:
+                        # Dòng rỗng Tên vật tư nhưng dòng cha đã có giá trị thật
+                        # (vd các mảnh cắt từ cùng 1 loại vải/tấm) — kế thừa vật
+                        # tư của cha, tra NVL bình thường theo giá trị đó.
+                        nguong = int(rec.get('nguong_fuzzy', 0) or 0) or 92
+                        self._fuzzy_ctx = {
+                            'section': bom_section,
+                            'field': sql_col,
+                            'row_idx': builtin_order,
+                        }
+                        raw, _ = self._lookup_generic(
+                            str(inherited_vt).strip(), _name_cache, 'fuzzy_name', nguong,
                             _cache_key=(bm, dk, ss, lv))
                     else:
                         raw = None
@@ -9541,6 +9557,7 @@ class BOMToolApp(ctk.CTk):
                 return str(raw).strip()
 
             _btp_stt_set = set()
+            _vt_inherit_map = {}
             if section == 'BOM2' and stt_col is not None:
                 _norm_tvt = _norm_vn('Tên vật tư')
                 _ten_vt_col = next(
@@ -9568,14 +9585,35 @@ class BOMToolApp(ctk.CTk):
 
                     _PLACEHOLDER_VALS = {'_', '--', '-', 'x', 'n/a'}
                     _stt_seq = [_get_stt_pre(df.iloc[_i].get(stt_col)) for _i in range(len(df))]
+
+                    def _is_real_vt(v):
+                        if v is None: return False
+                        if isinstance(v, float) and _math.isnan(v): return False
+                        s = str(v).strip()
+                        return bool(s) and s.lower() != 'nan' and s not in _PLACEHOLDER_VALS
+
+                    # Tìm Tên vật tư hiệu lực của dòng cha (STT=_pstt) — quét
+                    # NGƯỢC từ vị trí _i để tránh đụng STT trùng lặp ở section
+                    # khác (mỗi section đánh số lại từ 1, vd Foam "1.1" và Vải
+                    # "1.1" là 2 dòng hoàn toàn khác nhau) — không dùng dict
+                    # tra theo chuỗi STT toàn cục (sẽ bị section sau ghi đè).
+                    def _find_parent_vt(_i, _pstt):
+                        for _j in range(_i - 1, -1, -1):
+                            if _stt_seq[_j] == _pstt:
+                                _v = df.iloc[_j].get(_ten_vt_col)
+                                if _is_real_vt(_v):
+                                    return _v
+                                if '.' in _pstt:
+                                    return _find_parent_vt(_j, _pstt.rsplit('.', 1)[0])
+                                return None
+                        return None
+
+                    _vt_inherit_map = {}
                     for _i, _s in enumerate(_stt_seq):
                         if not _s or not NUMERIC_STT_PATTERN.match(_s):
                             continue
                         _vt_raw = df.iloc[_i].get(_ten_vt_col)
-                        _vt_empty = (_vt_raw is None
-                                     or (isinstance(_vt_raw, float) and _math.isnan(_vt_raw))
-                                     or str(_vt_raw).strip().lower() in ('', 'nan')
-                                     or str(_vt_raw).strip() in _PLACEHOLDER_VALS)
+                        _vt_empty = not _is_real_vt(_vt_raw)
 
                         # Rule 2: CHỈ STT nguyên (không thập phân) + Tên vật tư chứa "+"
                         if '.' not in _s and not _vt_empty and '+' in str(_vt_raw):
@@ -9586,6 +9624,17 @@ class BOMToolApp(ctk.CTk):
                         # HOẶC có dòng con bên dưới — chỉ cần 1 trong 2 là đủ, mọi tầng).
                         if not _vt_empty:
                             continue
+
+                        # Dòng cha (1 cấp trên) đã có Tên vật tư thật → dòng này chỉ
+                        # là mảnh cắt của CÙNG vật tư đó (vd các miếng vải/tấm cắt
+                        # rời theo module) — KẾ THỪA vật tư cha, KHÔNG coi là BTP dù
+                        # rỗng + có Tên chi tiết.
+                        if '.' in _s:
+                            _parent_vt = _find_parent_vt(_i, _s.rsplit('.', 1)[0])
+                            if _is_real_vt(_parent_vt):
+                                _vt_inherit_map[_s] = _parent_vt
+                                continue
+
                         _ct_raw = df.iloc[_i].get(_ten_ct_col) if _ten_ct_col is not None else None
                         _ct_empty = (_ct_raw is None
                                      or (isinstance(_ct_raw, float) and _math.isnan(_ct_raw))
@@ -9648,7 +9697,8 @@ class BOMToolApp(ctk.CTk):
                     detail_caches, now, builtin_order, bom_detail_type,
                     sp_cfgs=sp_cfgs_section, bom_section=section,
                     is_btp_row=(stt_v in _btp_stt_set),
-                    item_code0=_item_code0
+                    item_code0=_item_code0,
+                    inherited_vt=_vt_inherit_map.get(stt_v)
                 )
 
                 # Fill-Forward
