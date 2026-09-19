@@ -1,6 +1,6 @@
 {
-    "version": "2.2.16",
+    "version": "2.2.17",
     "release_date": "2026-09-19",
-    "download_url": "https://github.com/davit-philn/boho-import-tool/releases/download/v2.2.16/BOHO_IMPORT_BOM_THDM_v2.2.16_Portable.zip",
-    "release_notes": "Fix BOM2: dong con (X.1, X.2...) rong Ten vat tu nhung dong cha da co gia tri that (vd manh cat cung 1 loai vai/tam) bi nham thanh BTP - gio ke thua vat tu tu dong cha, tra NVL binh thuong."
+    "download_url": "https://github.com/davit-philn/boho-import-tool/releases/download/v2.2.17/BOHO_IMPORT_BOM_THDM_v2.2.17_Portable.zip",
+    "release_notes": "Fix nguy co treo/loi popup khi Import that gap gia tri trung ten (chay tren background thread, khong con mo popup tu do); mo rong buoc Kiem tra de doi chieu truoc ca truong nvl_or_btp; them log chan doan bom_lookup_fail.log."
 }

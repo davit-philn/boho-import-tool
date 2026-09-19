@@ -7292,6 +7292,25 @@ class BOMToolApp(ctk.CTk):
     def _clear_log(self):
         self.log_tree.delete(*self.log_tree.get_children())
 
+    def _log_bom_lookup_fail(self, section, row_idx, ten_vat_tu, ten_chi_tiet,
+                              is_btp_row, cache_size):
+        """Ghi log chẩn đoán khi 1 dòng BOM có Tên vật tư thật nhưng không
+        resolve được ItemId — chỉ ghi file thuần (an toàn gọi từ background
+        thread khi Import thật đang chạy, KHÔNG được đụng vào Tkinter ở đây)."""
+        try:
+            ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            _lp = os.path.join(os.path.dirname(sys.executable)
+                               if getattr(sys, 'frozen', False)
+                               else os.path.dirname(os.path.abspath(__file__)),
+                               'bom_lookup_fail.log')
+            with open(_lp, 'a', encoding='utf-8') as _lf:
+                _lf.write(
+                    f"[{ts}] section={section} row={row_idx} "
+                    f"is_btp_row={is_btp_row} cache_size={cache_size} "
+                    f"ten_vat_tu={ten_vat_tu!r} ten_chi_tiet={ten_chi_tiet!r}\n")
+        except Exception:
+            pass
+
     # ── DB Log: bảng BOMTool_ImportLog, nằm ở DB riêng [BOMTool] (không
     # chung DB với Bravo) — tạo bằng sql/create_[BOMTool].sql ──────────────
     DB_LOG_DATABASE = '[BOMTool]'
@@ -8066,7 +8085,7 @@ class BOMToolApp(ctk.CTk):
                     _all_recs = self.mapping.get(_sec, [])
                     _fuzzy_recs = [
                         r for r in _all_recs
-                        if _nan_str(r.get('kieu_lookup', '')) in ('fuzzy_code', 'fuzzy_name')
+                        if _nan_str(r.get('kieu_lookup', '')) in ('fuzzy_code', 'fuzzy_name', 'nvl_or_btp')
                         and _nan_str(r.get('nguon_dl', '')) not in ('CoDinh', 'HeThong', 'SP', 'TinhToan')
                         and _nan_str(r.get('truong_so_sanh', ''))
                         and _nan_str(r.get('truong_lay_ve', ''))
@@ -8076,6 +8095,7 @@ class BOMToolApp(ctk.CTk):
                     _dcaches = self._build_bom_detail_caches(conn, _all_recs)
                     self._ps_bom_caches[_sec] = _dcaches
                     _stt_col = next((c for c in _df.columns if _norm_vn(str(c)) == 'stt'), None)
+                    _PLACEHOLDER_VALS_PS = {'_', '--', '-', 'x', 'n/a'}
                     _order = 0
                     for _, _drow in _df.iterrows():
                         if _drow.isna().all():
@@ -8095,22 +8115,52 @@ class BOMToolApp(ctk.CTk):
                             _nguong = int(_rec.get('nguong_fuzzy', 0) or 0) or 92
                             _raw = None
                             if _ten:
-                                _norm_ten = _norm_vn(_ten)
-                                for _col in _drow.index:
-                                    _cs = str(_col).strip()
-                                    if _cs == _ten or _norm_vn(_cs) == _norm_ten:
-                                        _v = _drow[_col]
-                                        if _v is None or (isinstance(_v, float) and _math.isnan(_v)):
+                                if '|' in _ten:
+                                    # Compound key (vd nvl_or_btp: "Tên vật tư|Tên
+                                    # chi tiết") — chỉ cần phần ĐẦU (Tên vật tư) để
+                                    # pre-collect ambiguity fuzzy_name; đồng nhất
+                                    # Pass1/Pass2 với _resolve_detail_row.
+                                    _first = _ten.split('|')[0].strip()
+                                    _norm_first = _norm_vn(_first)
+                                    for _col in _drow.index:
+                                        _cs = str(_col).strip()
+                                        if _cs == _first or _norm_vn(_cs) == _norm_first:
+                                            _v = _drow[_col]
+                                            if not (_v is None or (isinstance(_v, float) and _math.isnan(_v))):
+                                                _raw = _v
                                             break
-                                        _raw = _v
-                                        break
+                                    if _raw is None and _norm_first:
+                                        for _col in _drow.index:
+                                            _norm_c = _norm_vn(str(_col).strip())
+                                            if _norm_c.endswith(_norm_first) and len(_norm_c) > len(_norm_first):
+                                                _v = _drow[_col]
+                                                if not (_v is None or (isinstance(_v, float) and _math.isnan(_v))):
+                                                    _raw = _v
+                                                break
+                                else:
+                                    _norm_ten = _norm_vn(_ten)
+                                    for _col in _drow.index:
+                                        _cs = str(_col).strip()
+                                        if _cs == _ten or _norm_vn(_cs) == _norm_ten:
+                                            _v = _drow[_col]
+                                            if _v is None or (isinstance(_v, float) and _math.isnan(_v)):
+                                                break
+                                            _raw = _v
+                                            break
                             if _raw is None:
                                 continue
+                            if _kl == 'nvl_or_btp' and str(_raw).strip() in _PLACEHOLDER_VALS_PS:
+                                continue   # rỗng/placeholder → BTP hoặc bỏ qua, không fuzzy_name
                             _cache_key = (_bm, _dk, _ss, _lv)
                             _cache = _dcaches.get(_cache_key, [])
                             self._fuzzy_ctx = {
                                 'section': _sec, 'field': _scol, 'row_idx': _order}
-                            self._lookup_generic(_raw, _cache, _kl, _nguong, _cache_key=_cache_key)
+                            # nvl_or_btp: bản thân _lookup_generic không hiểu kiểu
+                            # này, engine thật luôn tra theo 'fuzzy_name' cho phần
+                            # Tên vật tư — dùng đúng loại đó khi pre-collect.
+                            self._lookup_generic(
+                                _raw, _cache, 'fuzzy_name' if _kl == 'nvl_or_btp' else _kl,
+                                _nguong, _cache_key=_cache_key)
             except Exception as _pe:
                 import traceback as _tb
                 _err_msg = _tb.format_exc()
@@ -9305,9 +9355,14 @@ class BOMToolApp(ctk.CTk):
                             'field': sql_col,
                             'row_idx': builtin_order,
                         }
+                        # _no_popup=True: hàm này chạy trên background thread lúc
+                        # Import thật (_run_insert_bg) — Tkinter không an toàn để
+                        # mở popup từ thread nền (dễ treo/lỗi âm thầm). Ambiguity
+                        # thật sự phải được xử lý trước đó ở bước "Kiểm tra"
+                        # (_run_layer2_prescan, chạy an toàn trên main thread).
                         raw, _ = self._lookup_generic(
                             _vt_val, _name_cache, 'fuzzy_name', nguong,
-                            _cache_key=(bm, dk, ss, lv))
+                            _cache_key=(bm, dk, ss, lv), _no_popup=True)
                     elif inherited_vt:
                         # Dòng rỗng Tên vật tư nhưng dòng cha đã có giá trị thật
                         # (vd các mảnh cắt từ cùng 1 loại vải/tấm) — kế thừa vật
@@ -9320,9 +9375,17 @@ class BOMToolApp(ctk.CTk):
                         }
                         raw, _ = self._lookup_generic(
                             str(inherited_vt).strip(), _name_cache, 'fuzzy_name', nguong,
-                            _cache_key=(bm, dk, ss, lv))
+                            _cache_key=(bm, dk, ss, lv), _no_popup=True)
                     else:
                         raw = None
+
+                    if raw is None and _vt_val and _vt_val not in {'_', '--', '-', 'x', 'n/a'}:
+                        # Có Tên vật tư thật nhưng không resolve được ItemId — ghi
+                        # log chẩn đoán (file I/O thuần, an toàn gọi từ background
+                        # thread) để điều tra case tương tự lần sau không cần đoán.
+                        self._log_bom_lookup_fail(
+                            bom_section, builtin_order, _vt_val, _ct_val,
+                            is_btp_row, len(_name_cache))
                 else:
                     # fuzzy_name: placeholder như "_", "--" coi là không có tên → bỏ qua lookup
                     _is_placeholder = (
@@ -10318,7 +10381,7 @@ class BOMToolApp(ctk.CTk):
                     _all_recs = self.mapping.get(_sec, [])
                     _fuzzy_recs = [
                         r for r in _all_recs
-                        if _nan_str(r.get('kieu_lookup', '')) in ('fuzzy_code', 'fuzzy_name')
+                        if _nan_str(r.get('kieu_lookup', '')) in ('fuzzy_code', 'fuzzy_name', 'nvl_or_btp')
                         and _nan_str(r.get('nguon_dl', '')) not in ('CoDinh', 'HeThong', 'SP', 'TinhToan')
                         and _nan_str(r.get('truong_so_sanh', ''))
                         and _nan_str(r.get('truong_lay_ve', ''))
@@ -10328,6 +10391,7 @@ class BOMToolApp(ctk.CTk):
                     _dcaches = self._build_bom_detail_caches(conn, _all_recs)
                     self._ps_bom_caches[_sec] = _dcaches
                     _stt_col = next((c for c in _df.columns if _norm_vn(str(c)) == 'stt'), None)
+                    _PLACEHOLDER_VALS_PS = {'_', '--', '-', 'x', 'n/a'}
                     _order = 0
                     for _, _drow in _df.iterrows():
                         if _drow.isna().all():
@@ -10347,22 +10411,52 @@ class BOMToolApp(ctk.CTk):
                             _nguong = int(_rec.get('nguong_fuzzy', 0) or 0) or 92
                             _raw = None
                             if _ten:
-                                _norm_ten = _norm_vn(_ten)
-                                for _col in _drow.index:
-                                    _cs = str(_col).strip()
-                                    if _cs == _ten or _norm_vn(_cs) == _norm_ten:
-                                        _v = _drow[_col]
-                                        if _v is None or (isinstance(_v, float) and _math.isnan(_v)):
+                                if '|' in _ten:
+                                    # Compound key (vd nvl_or_btp: "Tên vật tư|Tên
+                                    # chi tiết") — chỉ cần phần ĐẦU (Tên vật tư) để
+                                    # pre-collect ambiguity fuzzy_name; đồng nhất
+                                    # Pass1/Pass2 với _resolve_detail_row.
+                                    _first = _ten.split('|')[0].strip()
+                                    _norm_first = _norm_vn(_first)
+                                    for _col in _drow.index:
+                                        _cs = str(_col).strip()
+                                        if _cs == _first or _norm_vn(_cs) == _norm_first:
+                                            _v = _drow[_col]
+                                            if not (_v is None or (isinstance(_v, float) and _math.isnan(_v))):
+                                                _raw = _v
                                             break
-                                        _raw = _v
-                                        break
+                                    if _raw is None and _norm_first:
+                                        for _col in _drow.index:
+                                            _norm_c = _norm_vn(str(_col).strip())
+                                            if _norm_c.endswith(_norm_first) and len(_norm_c) > len(_norm_first):
+                                                _v = _drow[_col]
+                                                if not (_v is None or (isinstance(_v, float) and _math.isnan(_v))):
+                                                    _raw = _v
+                                                break
+                                else:
+                                    _norm_ten = _norm_vn(_ten)
+                                    for _col in _drow.index:
+                                        _cs = str(_col).strip()
+                                        if _cs == _ten or _norm_vn(_cs) == _norm_ten:
+                                            _v = _drow[_col]
+                                            if _v is None or (isinstance(_v, float) and _math.isnan(_v)):
+                                                break
+                                            _raw = _v
+                                            break
                             if _raw is None:
                                 continue
+                            if _kl == 'nvl_or_btp' and str(_raw).strip() in _PLACEHOLDER_VALS_PS:
+                                continue   # rỗng/placeholder → BTP hoặc bỏ qua, không fuzzy_name
                             _cache_key = (_bm, _dk, _ss, _lv)
                             _cache = _dcaches.get(_cache_key, [])
                             self._fuzzy_ctx = {
                                 'section': _sec, 'field': _scol, 'row_idx': _order}
-                            self._lookup_generic(_raw, _cache, _kl, _nguong, _cache_key=_cache_key)
+                            # nvl_or_btp: bản thân _lookup_generic không hiểu kiểu
+                            # này, engine thật luôn tra theo 'fuzzy_name' cho phần
+                            # Tên vật tư — dùng đúng loại đó khi pre-collect.
+                            self._lookup_generic(
+                                _raw, _cache, 'fuzzy_name' if _kl == 'nvl_or_btp' else _kl,
+                                _nguong, _cache_key=_cache_key)
             except Exception as _pe:
                 import traceback as _tb
                 _err_msg = _tb.format_exc()
