@@ -1,6 +1,6 @@
 {
-    "version": "2.2.17",
+    "version": "2.2.18",
     "release_date": "2026-09-19",
-    "download_url": "https://github.com/davit-philn/boho-import-tool/releases/download/v2.2.17/BOHO_IMPORT_BOM_THDM_v2.2.17_Portable.zip",
-    "release_notes": "Fix nguy co treo/loi popup khi Import that gap gia tri trung ten (chay tren background thread, khong con mo popup tu do); mo rong buoc Kiem tra de doi chieu truoc ca truong nvl_or_btp; them log chan doan bom_lookup_fail.log."
+    "download_url": "https://github.com/davit-philn/boho-import-tool/releases/download/v2.2.18/BOHO_IMPORT_BOM_THDM_v2.2.18_Portable.zip",
+    "release_notes": "Fix bug nghiem trong: STT trung so giua cac section khac nhau (vd '1' o section A va '1' o section B) khien nhan dien BTP bi lay nhiem sai qua section khac, mat ma vat tu du la NVL binh thuong."
 }
