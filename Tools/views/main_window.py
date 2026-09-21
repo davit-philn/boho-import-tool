@@ -9118,7 +9118,7 @@ class BOMToolApp(ctk.CTk):
     def _resolve_detail_row(self, mapping_recs, df_row, parent_row, conn,
                             detail_caches, now, builtin_order, bom_detail_type,
                             sp_cfgs=None, bom_section='', is_btp_row=False,
-                            item_code0=None, inherited_vt=None):
+                            item_code0=None):
         """
         Resolve một hàng DataFrame (BOM2/3/4) → dict {sql_col: value}.
         - mapping_recs : list record từ mapping sheet BOM2/3/4
@@ -9130,9 +9130,6 @@ class BOMToolApp(ctk.CTk):
                          Tên vật tư rỗng + có con) — dùng cho kieu_lookup=nvl_or_btp
         - item_code0   : Code của B20Item ứng với ItemId0 (sản phẩm cha) — dùng
                          để scope khi tái dùng mã BTP đã tạo trước đó
-        - inherited_vt : Tên vật tư kế thừa từ dòng cha (khi dòng này rỗng Tên
-                         vật tư nhưng dòng cha đã có giá trị thật — dùng cho
-                         kieu_lookup=nvl_or_btp khi is_btp_row=False)
         """
         import datetime as _dt
         import math as _math
@@ -9363,19 +9360,6 @@ class BOMToolApp(ctk.CTk):
                         raw, _ = self._lookup_generic(
                             _vt_val, _name_cache, 'fuzzy_name', nguong,
                             _cache_key=(bm, dk, ss, lv), _no_popup=True)
-                    elif inherited_vt:
-                        # Dòng rỗng Tên vật tư nhưng dòng cha đã có giá trị thật
-                        # (vd các mảnh cắt từ cùng 1 loại vải/tấm) — kế thừa vật
-                        # tư của cha, tra NVL bình thường theo giá trị đó.
-                        nguong = int(rec.get('nguong_fuzzy', 0) or 0) or 92
-                        self._fuzzy_ctx = {
-                            'section': bom_section,
-                            'field': sql_col,
-                            'row_idx': builtin_order,
-                        }
-                        raw, _ = self._lookup_generic(
-                            str(inherited_vt).strip(), _name_cache, 'fuzzy_name', nguong,
-                            _cache_key=(bm, dk, ss, lv), _no_popup=True)
                     else:
                         raw = None
 
@@ -9405,6 +9389,22 @@ class BOMToolApp(ctk.CTk):
                             'row_idx': builtin_order,
                         }
                         raw, _ = self._lookup_generic(raw, cache, kl, nguong, _cache_key=cache_key)
+
+            # Fallback ĐVT: Excel không điền Đvt cho dòng này nhưng ItemId đã
+            # resolve được (ItemId luôn xử lý trước Unit trong mapping) — lấy
+            # luôn ĐVT của chính item đó trong danh mục thay vì để trống. Chỉ
+            # nhận giá trị thật (bỏ qua rỗng/"-" — không thêm thông tin gì).
+            if sql_col == 'Unit' and (raw is None or (isinstance(raw, str) and not raw.strip())):
+                _item_id_for_unit = row_out.get('ItemId')
+                if _item_id_for_unit:
+                    try:
+                        _cur_u = conn.cursor()
+                        _cur_u.execute("SELECT Unit FROM B20Item WHERE Id = ?", (_item_id_for_unit,))
+                        _ru = _cur_u.fetchone()
+                        if _ru and _ru[0] and str(_ru[0]).strip() not in ('', '-'):
+                            raw = _ru[0]
+                    except Exception:
+                        pass
 
             row_out[sql_col] = raw
 
@@ -9620,7 +9620,7 @@ class BOMToolApp(ctk.CTk):
                 return str(raw).strip()
 
             _btp_stt_set = set()
-            _vt_inherit_map = {}
+            _btp_skip_mkt_set = set()
             _sec_id_seq = None
             if section == 'BOM2' and stt_col is not None:
                 _norm_tvt = _norm_vn('Tên vật tư')
@@ -9654,7 +9654,7 @@ class BOMToolApp(ctk.CTk):
                     # section A và "1" ở section B là 2 dòng HOÀN TOÀN KHÁC
                     # NHAU. _sec_id_seq gán mỗi dòng 1 "mã section" (= vị trí
                     # dòng section-header gần nhất phía trên) để tránh
-                    # _btp_stt_set/_vt_inherit_map bị lẫn STT trùng số giữa
+                    # _btp_stt_set bị lẫn STT trùng số giữa
                     # các section (đã xảy ra thật: STT=1 của section A là BTP
                     # → lây nhiễm sai sang STT=1 của section B/C).
                     _sec_id_seq = [None] * len(_stt_seq)
@@ -9670,11 +9670,20 @@ class BOMToolApp(ctk.CTk):
                         s = str(v).strip()
                         return bool(s) and s.lower() != 'nan' and s not in _PLACEHOLDER_VALS
 
-                    # Tìm Tên vật tư hiệu lực của dòng cha (STT=_pstt) — quét
-                    # NGƯỢC từ vị trí _i để tránh đụng STT trùng lặp ở section
-                    # khác (mỗi section đánh số lại từ 1, vd Foam "1.1" và Vải
-                    # "1.1" là 2 dòng hoàn toàn khác nhau) — không dùng dict
-                    # tra theo chuỗi STT toàn cục (sẽ bị section sau ghi đè).
+                    # Tìm Tên vật tư của dòng cha (STT=_pstt) — quét NGƯỢC từ vị
+                    # trí _i để tránh đụng STT trùng lặp ở section khác (mỗi
+                    # section đánh số lại từ 1). Ưu tiên khớp ĐÚNG STT cha kiểu
+                    # lồng thập phân (X.Y → X, đệ quy nếu cha cũng rỗng) — GIỮ
+                    # NGUYÊN hành vi cũ cho các file dùng kiểu này (vd ARMCHAIR:
+                    # "1" → "1.1".."1.8").
+                    #
+                    # Fallback (chỉ chạy khi KHÔNG có dòng "X" trần nào — file
+                    # dùng kiểu đánh số khác: mỗi chi tiết là 1 số nguyên riêng
+                    # + ".1", không lồng nhau thật, vd "7.1" khai vật liệu,
+                    # "8.1".."13.1" là mảnh cắt, không có dòng "8" trần nào cả):
+                    # quét ngược trong CÙNG SECTION, lấy dòng gần nhất có Tên
+                    # vật tư thật — dừng lại ngay khi gặp dòng section-header
+                    # hoặc sang section khác, không lấn dữ liệu section khác.
                     def _find_parent_vt(_i, _pstt):
                         for _j in range(_i - 1, -1, -1):
                             if _stt_seq[_j] == _pstt:
@@ -9684,9 +9693,18 @@ class BOMToolApp(ctk.CTk):
                                 if '.' in _pstt:
                                     return _find_parent_vt(_j, _pstt.rsplit('.', 1)[0])
                                 return None
+                        _cur_sec = _sec_id_seq[_i]
+                        for _j in range(_i - 1, -1, -1):
+                            if _sec_id_seq[_j] != _cur_sec:
+                                break
+                            _sj = _stt_seq[_j]
+                            if _sj and SECTION_STT_PATTERN.match(_sj):
+                                break
+                            _v = df.iloc[_j].get(_ten_vt_col)
+                            if _is_real_vt(_v):
+                                return _v
                         return None
 
-                    _vt_inherit_map = {}
                     for _i, _s in enumerate(_stt_seq):
                         if not _s or not NUMERIC_STT_PATTERN.match(_s):
                             continue
@@ -9695,24 +9713,17 @@ class BOMToolApp(ctk.CTk):
                         _vt_empty = not _is_real_vt(_vt_raw)
 
                         # Rule 2: CHỈ STT nguyên (không thập phân) + Tên vật tư chứa "+"
+                        # → container thật (không có vật liệu cha khác để rơi về
+                        # MKT) — nếu chưa có mã tái dùng thì để SP_HOOK tự tạo mới.
                         if '.' not in _s and not _vt_empty and '+' in str(_vt_raw):
                             _btp_stt_set.add(_skey)
+                            _btp_skip_mkt_set.add(_skey)
                             continue
 
                         # Rule 1: Tên vật tư rỗng + (có Tên chi tiết để đặt tên mã mới
                         # HOẶC có dòng con bên dưới — chỉ cần 1 trong 2 là đủ, mọi tầng).
                         if not _vt_empty:
                             continue
-
-                        # Dòng cha (1 cấp trên) đã có Tên vật tư thật → dòng này chỉ
-                        # là mảnh cắt của CÙNG vật tư đó (vd các miếng vải/tấm cắt
-                        # rời theo module) — KẾ THỪA vật tư cha, KHÔNG coi là BTP dù
-                        # rỗng + có Tên chi tiết.
-                        if '.' in _s:
-                            _parent_vt = _find_parent_vt(_i, _s.rsplit('.', 1)[0])
-                            if _is_real_vt(_parent_vt):
-                                _vt_inherit_map[_skey] = _parent_vt
-                                continue
 
                         _ct_raw = df.iloc[_i].get(_ten_ct_col) if _ten_ct_col is not None else None
                         _ct_empty = (_ct_raw is None
@@ -9727,6 +9738,21 @@ class BOMToolApp(ctk.CTk):
                                 break
                         if not _ct_empty or _has_child:
                             _btp_stt_set.add(_skey)
+                            # Dòng con (thập phân) mà dòng cha (1 cấp trên) ĐÃ có
+                            # Tên vật tư thật → chỉ là mảnh cắt/tiêu hao từ vật
+                            # liệu cha (vd miếng vải/tấm cắt rời theo module) —
+                            # vẫn thử tìm mã tái dùng theo Tên chi tiết trước
+                            # (_find_existing_btp_code), nhưng nếu KHÔNG có thì
+                            # KHÔNG cho SP_HOOK tự tạo mã mới — rơi về MKT-fallback
+                            # theo nhóm vật tư (MKT_VAI...) thay vì tạo mã rác.
+                            # Container thật (cha cũng rỗng, hoặc STT nguyên) vẫn
+                            # giữ hành vi cũ: không có mã tái dùng → để SP_HOOK tạo.
+                            _parent_has_material = (
+                                '.' in _s
+                                and _is_real_vt(_find_parent_vt(_i, _s.rsplit('.', 1)[0]))
+                            )
+                            if not _parent_has_material:
+                                _btp_skip_mkt_set.add(_skey)
 
 
             for _pos, (_, df_row) in enumerate(df.iterrows()):
@@ -9782,8 +9808,7 @@ class BOMToolApp(ctk.CTk):
                     detail_caches, now, builtin_order, bom_detail_type,
                     sp_cfgs=sp_cfgs_section, bom_section=section,
                     is_btp_row=(_btp_key in _btp_stt_set),
-                    item_code0=_item_code0,
-                    inherited_vt=_vt_inherit_map.get(_btp_key)
+                    item_code0=_item_code0
                 )
 
                 # Fill-Forward
@@ -9792,14 +9817,34 @@ class BOMToolApp(ctk.CTk):
                         row_vals[sql_col_ff] = current_ff[sql_col_ff]
 
                 # MKT fallback: ItemId=NULL → dùng mã tạm theo ItemType.
-                # BỎ QUA cho dòng BTP (_btp_key trong _btp_stt_set) — để trống
-                # ItemId, SP_HOOK BeforeInsertBatch (usp_B20BOM_Create_ItemCode)
-                # tự tạo mã thật thay vì mã tạm.
-                if not row_vals.get('ItemId') and _mkt_cache and _btp_key not in _btp_stt_set:
+                # BỎ QUA cho dòng "container BTP" thật (_btp_key trong
+                # _btp_skip_mkt_set) — để trống ItemId, SP_HOOK BeforeInsertBatch
+                # (usp_B20BOM_Create_ItemCode) tự tạo mã thật thay vì mã tạm.
+                # Dòng BTP dạng "mảnh cắt từ vật liệu cha" (không có trong tập
+                # này dù có trong _btp_stt_set) VẪN được fallback MKT bình
+                # thường nếu không tìm thấy mã tái dùng.
+                if not row_vals.get('ItemId') and _mkt_cache and _btp_key not in _btp_skip_mkt_set:
                     _item_type = row_vals.get('ItemType')
                     _fallback = _mkt_cache.get(_item_type) or _mkt_cache.get(None)
                     if _fallback:
                         row_vals['ItemId'] = _fallback
+                        # Fallback ĐVT riêng cho dòng vừa nhận mã MKT — ItemId
+                        # lúc này mới có (sau bước resolve chính), nên fallback
+                        # ĐVT thông thường (trong _resolve_detail_row) chưa kịp
+                        # áp dụng. Mã MKT trong danh mục luôn có ĐVT="-" (đúng
+                        # bản chất placeholder) — lấy luôn, KHÔNG loại trừ "-"
+                        # như fallback thông thường (loại trừ đó chỉ áp dụng
+                        # cho item thật, không phù hợp với MKT).
+                        if section != 'BOM4' and 'Unit' in row_vals and not (row_vals.get('Unit') or '').strip():
+                            try:
+                                _cur_mu = conn.cursor()
+                                _cur_mu.execute(
+                                    "SELECT Unit FROM B20Item WHERE Id = ?", (_fallback,))
+                                _rmu = _cur_mu.fetchone()
+                                if _rmu and _rmu[0] and str(_rmu[0]).strip():
+                                    row_vals['Unit'] = _rmu[0]
+                            except Exception:
+                                pass
 
                 # Per-row SP_HOOK BeforeInsert — dùng shared runner
                 _run_row_sp_hooks(
