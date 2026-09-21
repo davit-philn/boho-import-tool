@@ -105,6 +105,7 @@ class BOMToolApp(ctk.CTk):
         self.db_cfg        = self._load_db_config()
         self._skipped_sheets = []
         self._current_creator_user_id = None   # UserId (B00UserList.Id) được chọn ở tab BOM
+        self._current_creator_employee_id = None  # EmployeeId (B20Employee.Id) riêng, KHÔNG qua fallback UserId
         self._thdm_creator_user_id    = None   # UserId riêng cho tab THDM
         self._thdm_creator_employee_id = None  # EmployeeId (B20Employee.Id) riêng cho tab THDM
 
@@ -4788,6 +4789,10 @@ class BOMToolApp(ctk.CTk):
             if user_id is None:
                 user_id = DEFAULT_CREATOR_USER_ID
         self._current_creator_user_id = user_id
+        # EmployeeId thật (B20Employee.Id): lưu riêng, KHÔNG qua fallback UserId —
+        # tránh mất dấu nhân viên thật khi họ chưa được ráp UserList (bug đã gặp:
+        # toàn bộ rơi về EmployeeId=1 vì CreatedBy fallback che mất người chọn).
+        self._current_creator_employee_id = getattr(self, '_employee_id_map', {}).get(selected_name)
         self._bom_layer2_done = False
         self.cmb_creator.set_error(False)
         # Sau khi chọn chỉ hiển thị Code (phần trước |)
@@ -8933,6 +8938,8 @@ class BOMToolApp(ctk.CTk):
         elif nguon == 'UILookup':
             if mac_dinh == 'creator':
                 return self._current_creator_user_id, 'ui_lookup'
+            elif mac_dinh == 'creator_employee':
+                return self._current_creator_employee_id, 'ui_lookup'
             elif mac_dinh == 'product_id':
                 return self._thdm_selected_product_id, 'ui_lookup'
             elif mac_dinh == 'order_id':
