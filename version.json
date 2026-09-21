@@ -1,6 +1,6 @@
 {
-    "version": "2.2.19",
+    "version": "2.2.20",
     "release_date": "2026-09-21",
-    "download_url": "https://github.com/davit-philn/boho-import-tool/releases/download/v2.2.19/BOHO_IMPORT_BOM_THDM_v2.2.19_Portable.zip",
+    "download_url": "https://github.com/davit-philn/boho-import-tool/releases/download/v2.2.20/BOHO_IMPORT_BOM_THDM_v2.2.20_Portable.zip",
     "release_notes": "BOM2: dong con la manh cat tu vat lieu cha (vd vai cat roi theo module) van thu tim ma tai dung truoc, khong co thi rot ve MKT-fallback thay vi de SP_HOOK tu tao ma moi."
 }
