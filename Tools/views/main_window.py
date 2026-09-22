@@ -8068,8 +8068,10 @@ class BOMToolApp(ctk.CTk):
                         continue
                     # Đơn hàng đã chọn từ dropdown → khỏi đoán fuzzy, tránh hiện
                     # popup dư thừa cho field mà Import thật sự sẽ bỏ qua bước này.
-                    if _r.get('sql_col', '') in ('ParentBizDocId', 'BizDocId_SO',
-                                                  'ParentDetailRowId_SO') \
+                    # KHÔNG gồm ParentDetailRowId_SO — field này cần công thức
+                    # "Mục số|@ParentBizDocId" (giống DetailRowId_SO), không phải
+                    # bằng thẳng mã đơn hàng.
+                    if _r.get('sql_col', '') in ('ParentBizDocId', 'BizDocId_SO') \
                             and self._bom_selected_order_id:
                         continue
                     self._fuzzy_ctx = {
@@ -10429,8 +10431,10 @@ class BOMToolApp(ctk.CTk):
                         continue
                     # Đơn hàng đã chọn từ dropdown → khỏi đoán fuzzy, tránh hiện
                     # popup dư thừa cho field mà Import thật sự sẽ bỏ qua bước này.
-                    if _r.get('sql_col', '') in ('ParentBizDocId', 'BizDocId_SO',
-                                                  'ParentDetailRowId_SO') \
+                    # KHÔNG gồm ParentDetailRowId_SO — field này cần công thức
+                    # "Mục số|@ParentBizDocId" (giống DetailRowId_SO), không phải
+                    # bằng thẳng mã đơn hàng.
+                    if _r.get('sql_col', '') in ('ParentBizDocId', 'BizDocId_SO') \
                             and self._bom_selected_order_id:
                         continue
                     _cache_key_h = (_r.get('bang_master',''), _r.get('dieu_kien_master',''),
@@ -10590,10 +10594,13 @@ class BOMToolApp(ctk.CTk):
                         continue
                     sql_col = rec['sql_col']
                     # Đơn hàng đã chọn chắc chắn từ dropdown UI → dùng thẳng cho
-                    # MỌI field liên quan (không chỉ ParentBizDocId), TRƯỚC khi
-                    # các field phụ thuộc (vd DetailRowId_SO = "Mục số|@ParentBizDocId")
-                    # đọc phải giá trị đoán fuzzy còn dang dở/sai.
-                    if sql_col in ('ParentBizDocId', 'BizDocId_SO', 'ParentDetailRowId_SO') \
+                    # ParentBizDocId/BizDocId_SO, TRƯỚC khi các field phụ thuộc
+                    # (vd DetailRowId_SO = "Mục số|@ParentBizDocId") đọc phải giá
+                    # trị đoán fuzzy còn dang dở/sai. KHÔNG gồm ParentDetailRowId_SO
+                    # — field này PHẢI qua công thức "Mục số|@ParentBizDocId" giống
+                    # DetailRowId_SO (2 field này luôn phải bằng nhau), nếu gán
+                    # thẳng = mã đơn hàng thì mất số Mục số, gây lệch dữ liệu.
+                    if sql_col in ('ParentBizDocId', 'BizDocId_SO') \
                             and self._bom_selected_order_id:
                         row[sql_col] = self._bom_selected_order_id
                         continue
