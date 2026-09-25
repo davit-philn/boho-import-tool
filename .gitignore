@@ -20,6 +20,12 @@ Tools/config/db_config.json
 Tools/services/config/db_config.json
 Other/acc.txt
 
+# ── v3/ rebuild copy: same sensitive-file rules as above ───────
+v3/Tools/config/db_config.json
+v3/Tools/services/config/db_config.json
+v3/sample_data/bom_import/**/*.xlsm
+v3/sample_data/bom_import/**/*.xlsx
+
 # ── Logs ──────────────────────────────────────────────────────
 *.log
 
