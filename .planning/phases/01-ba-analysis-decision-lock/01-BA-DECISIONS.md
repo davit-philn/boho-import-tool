@@ -603,7 +603,7 @@ SELECT TOP 10 Name, COUNT(*) AS n FROM B20Item WHERE IsActive = 1 GROUP BY Name 
 
 | Logic/rule con | Verdict (GIỮ/SỬA/BỎ) | Bằng chứng | Cách sửa (nếu SỬA) | Mức rủi ro |
 |---|---|---|---|---|
-| **G1** Build `_mkt_cache` từ `vB20Item_MKT`: `SELECT ItemTypeSX_Parent, Id` không `ORDER BY` → dict, dòng sau ghi đè dòng trước | SỬA | `main_window.py:9529-9538` (build cache), `main_window.py:9835-9839` (áp dụng lookup `_mkt_cache.get(_item_type) or _mkt_cache.get(None)`); `SQL-01` — 4 nhóm trùng `ItemTypeSX_Parent` (C=3, F=2, I=2, NULL=2) trên 15 dòng của view (9 khóa distinct); `SQL-01(d)` cho thấy "người thắng" thực tế đổi giữa các lần chạy (`MKT_VAI`=27 dòng vs `MKT_DA`=227 dòng cùng nhóm C; `MKT_COKHI`=9 vs `MKT_KINH`=63 cùng nhóm NULL) và `MKT_SIMILI` không bao giờ thắng dù luôn có trong view; commit `e92c060` (tạo `_mkt_cache` lần đầu, 2026-08-11, chưa từng được sửa lại tới v2.2.25) | Thêm `ORDER BY` xác định (ví dụ theo `CreatedAt DESC` hoặc `Id DESC`, ưu tiên bản ghi mới nhất) khi build `_mkt_cache`, đồng thời áp dụng tường minh 1 quy tắc ưu tiên khi 1 `ItemTypeSX_Parent` có nhiều dòng — quy tắc ưu tiên cụ thể (dòng nào thắng) là quyết định nghiệp vụ, xem `### Q-01` ở §5, không tự chọn | Cao |
+| **G1** Build `_mkt_cache` từ `vB20Item_MKT`: `SELECT ItemTypeSX_Parent, Id` không `ORDER BY` → dict, dòng sau ghi đè dòng trước | SỬA | `main_window.py:9529-9538` (build cache), `main_window.py:9835-9839` (áp dụng lookup `_mkt_cache.get(_item_type) or _mkt_cache.get(None)`); `SQL-01` — 4 nhóm trùng `ItemTypeSX_Parent` (C=3, F=2, I=2, NULL=2) trên 15 dòng của view (9 khóa distinct); `SQL-01(d)` cho thấy "người thắng" thực tế đổi giữa các lần chạy (`MKT_VAI`=27 dòng vs `MKT_DA`=227 dòng cùng nhóm C; `MKT_COKHI`=9 vs `MKT_KINH`=63 cùng nhóm NULL) và `MKT_SIMILI` không bao giờ thắng dù luôn có trong view; commit `e92c060` (tạo `_mkt_cache` lần đầu, 2026-08-11, chưa từng được sửa lại tới v2.2.25) | Thêm `ORDER BY` xác định (ví dụ theo `CreatedAt DESC` hoặc `Id DESC`, ưu tiên bản ghi mới nhất) khi build `_mkt_cache`, đồng thời áp dụng tường minh 1 quy tắc ưu tiên khi 1 `ItemTypeSX_Parent` có nhiều dòng — quy tắc ưu tiên cụ thể (dòng nào thắng) là quyết định nghiệp vụ, xem `### Q-01` ở §5, không tự chọn. Theo D-04 (§1): commit `e92c060` tạo `_mkt_cache` lần đầu KHÔNG có `ORDER BY` và chưa từng được sửa lại tới v2.2.25 — đây không phải đảo ngược 1 fix trước đó (không có fix nào từng nhắm vào chỗ này), mà là đóng 1 khoảng trống có từ lúc tạo | Cao |
 | **G2** Build `_mkt_cache` bọc trong `except Exception: pass` — thất bại (view mất quyền truy cập, mất kết nối tạm thời) bị nuốt HOÀN TOÀN, không log, cache rơi về `{}` rỗng (`main_window.py:9536-9538`) | SỬA | `main_window.py:9529-9538`; `SQL-01` (xác nhận `vB20Item_MKT` là view thật, truy cập bình thường trong điều kiện chuẩn — nên 1 lần thất bại là bất thường đáng ghi log, không phải trạng thái mong đợi); `SQL-07` (cache này phục vụ 84% lưu lượng MKT-fallback thật — 2.351/2.802 dòng) | Thêm log (`self._log(...)`) trong khối `except` trước khi để cache rỗng — 1 lần build cache thất bại (mất kết nối/quyền) hiện tại khiến MỌI dòng lẽ ra nhận MKT-fallback trong lần import đó âm thầm không nhận ItemId, không có dấu vết chẩn đoán, trên đúng code path đã xác nhận chiếm 84% lưu lượng MKT-fallback (`SQL-07`). Requirement: OBS-01 | Cao |
 | **G3** Điều kiện áp dụng MKT fallback: `not ItemId and _mkt_cache and _btp_key not in _btp_skip_mkt_set` (`main_window.py:9835`) | GIỮ | `main_window.py:9835`; `SQL-07` — 2.802 dòng lịch sử dùng MKT fallback, điều kiện gate đúng theo thiết kế (chỉ áp dụng khi chưa có `ItemId` và không thuộc tập bị loại trừ bởi `F11`) | - | Cao |
 | **G4** Key lookup `_mkt_cache.get(_item_type) or _mkt_cache.get(None)` — catch-all khi `ItemType` không khớp key nào (`main_window.py:9836-9839`) | GIỮ | `main_window.py:9836-9839`; `SQL-01`(a) — nhóm `NULL` có 2 dòng trùng (`MKT_COKHI` Id=421889, `MKT_KINH` Id=424817); `SQL-07` — nhóm `NULL` chiếm 72 dòng lịch sử. Cơ chế fallback-về-bucket-chung tự nó hợp lý (thiết kế đúng), nhưng bucket `None` KẾ THỪA đúng lỗi collision của `G1` — sửa ở `G1`, không cần sửa riêng ở đây | - | Cao |
@@ -611,7 +611,16 @@ SELECT TOP 10 Name, COUNT(*) AS n FROM B20Item WHERE IsActive = 1 GROUP BY Name 
 
 ### 4.H SP_HOOK
 
-_(Điền ở Plan 02.)_
+| Logic/rule con | Verdict (GIỮ/SỬA/BỎ) | Bằng chứng | Cách sửa (nếu SỬA) | Mức rủi ro |
+|---|---|---|---|---|
+| **H1** `mapping_loader.py:133-140`: `SP_CONFIG.Fallback` chuẩn hóa `'1.0'→'1'`; `mapping_loader.py:147-150`: `SP_HOOK` chỉ giữ dòng `isactive=='1'` NGAY LÚC LOAD mapping (không phải lúc dùng) | GIỮ | `mapping_loader.py:133-140, 147-150`; `EV-M01` — 3 dòng `SP_HOOK` active sau filter, 1 dòng `SP_CONFIG` (`Code`) có `isactive='0'` bị tắt đúng thiết kế | - | Thấp |
+| **H2** `_run_row_sp_hooks` Condition `EMPTY()`/`NOTEMPTY()` (`bom_parser.py:422-427`) | GIỮ | `bom_parser.py:422-427`; `EV-M01` (Condition `EMPTY(ItemId)` gặp thật ở cả 3 dòng SP_HOOK active) | - | Thấp |
+| **H3** Thay tham số `{field}`/`None` (`bom_parser.py:434-448`) | GIỮ | `bom_parser.py:434-448`; `EV-M01` | - | Thấp |
+| **H4** Gọi procedure bằng f-string dựng từ tên SP trong mapping (`bom_parser.py:450`, `cur.execute(f'EXEC {h_sp} ' + ...)`) | GIỮ | `bom_parser.py:450`; `EV-M01` — tên SP (`h_sp`) đến từ `SP_HOOK.SP_Name` trong file mapping cục bộ (`CK_Mapping_v5.xlsx`), do đội dev/admin quản lý trực tiếp, KHÔNG phải input từ người dùng cuối UI (khác lớp `f"SELECT TOP 0 [{col_name}] FROM {table}"` mà `CONCERNS.md` đã flag — nơi input gần biên người dùng hơn). Ranh giới tin cậy đúng: file mapping = cấu hình admin, không phải input động | - | Thấp |
+| **H5** Phân phối output field của SP trở lại `row_vals` (`bom_parser.py:451-456`) | GIỮ | `bom_parser.py:451-456`; `EV-M01` (`OutputFields="ItemId,ItemName,Unit"` cho cả 3 dòng SP_HOOK active) | - | Thấp |
+| **H6** Exception trong hook → gọi `log_fn` CHỈ KHI được truyền vào (`bom_parser.py:457-459`) — mặc định tham số `log_fn=None`; grep toàn repo xác nhận 2 call site: BOM (`main_window.py:9859-9862`) LUÔN truyền `log_fn` thật (`self._log(...)`); THDM (`main_window.py:7127-7128`) truyền tường minh `log_fn=None` (im lặng hoàn toàn — ngoài phạm vi BOM, không sửa ở đây) | GIỮ | `bom_parser.py:410, 457-459`, `main_window.py:9859-9862, 7127-7128`; `EV-M01` — với BOM, hook exception luôn được log qua `self._log`, không bao giờ rơi vào nhánh im lặng | - | Thấp |
+| **H7** Per-row `BeforeInsert` hook lọc theo section (`main_window.py:9584-9588`, gọi tại `9858-9862`) | GIỮ | `main_window.py:9584-9588, 9858-9862`; `EV-M01` — danh sách `mapping.get('SP_HOOK', [])` ĐÃ được lọc `isactive=='1'` từ lúc `load_mapping()` (`H1`), nên filter per-row này KHÔNG cần re-check `isactive` — so với batch filter (`H8`) có re-check tường minh `isactive=='1'` lần 2 (`main_window.py:9878`): re-check thứ 2 chỉ là double-guard vô hại (defensive), không phải bằng chứng 2 nơi xử lý khác nhau | - | Thấp |
+| **H8** `BeforeInsertBatch` gom theo `sp_name` → `_run_batch_hook_grouped` (`main_window.py:9872-9891`, hàm tại `9965-10070+`): `usp_B20BOM_Create_ItemCode`, Condition `EMPTY(ItemId)`, case blank-`ItemName` cho XML khi `'+'` hoặc placeholder (commit `e414085`) | GIỮ | `main_window.py:9872-9891, 9965-10052`; `SQL-03` (xác nhận `usp_B20BOM_Create_ItemCode` là SYNONYM trỏ `B10_Boho.dbo...`, tham số khớp đúng những gì `Params` mapping truyền — nhưng `OBJECT_DEFINITION` trả `NULL`, không xem được nội dung SP thật); `EV-M01` (3 dòng active, section BOM2/3/4, không có hook cho BOM5); commit `e414085` (§1, Chuỗi #3) | - | Trung bình |
 
 ### 4.I Fill-Forward lúc insert
 
@@ -620,15 +629,28 @@ _(Điền ở Plan 02.)_
 | **I1** `ff_fields` lấy từ mapping `fill_forward=='1'` + `ten_excel` (`main_window.py:9593-9597`) | GIỮ | `main_window.py:9593-9597`; `EV-M01` — `Fill_Forward=1` chỉ đúng field `ItemType` ở cả 4 section BOM2-5, 0 ở HEADER | - | Thấp |
 | **I2** Nhận diện section-header lúc insert, với override GIAO RỜI theo kích thước vật lý (`main_window.py:9786-9799`) — **tái tính toán ĐỘC LẬP** cùng 1 quy tắc (`SECTION_STT_PATTERN` + dims-check) mà `_parse_sheet` (`C3`/`C4`/`C5`) đã tính 1 lần ở tầng parse | SỬA | `main_window.py:9786-9799` so với `bom_parser.py:526-544` (`_parse_sheet`, cùng quy tắc, code hoàn toàn tách biệt); `EV-S07` — kết quả 2 nơi hiện khớp nhau (1.083 dòng section-header, 16 dòng GIAO RỜI) nhưng không có gì đảm bảo 2 bản sao không lệch nhau sau 1 lần sửa chỉ ở 1 nơi — đúng lớp rủi ro mà `cb2c1d7` (§1) đã từng phải vá khi `_sec_id_seq` lệch giữa các bước | Gộp `SECTION_STT_PATTERN`-match + dims-check thành 1 hàm dùng chung (`is_section_header_row(stt, row, dim_cols) -> bool`), gọi từ cả `_parse_sheet` và `_generate_bom_details` thay vì 2 bản độc lập. Hiệu ứng quan sát được: không đổi kết quả hiện tại (vẫn khớp `EV-S07`), nhưng loại bỏ khả năng 2 nơi lệch nhau sau lần sửa kế tiếp. Requirement: ARCH-01 | Trung bình |
 | **I3** Capture Fill-Forward tại dòng section-header (`main_window.py:9800-9806`) | GIỮ | `main_window.py:9800-9806`; `EV-S07`, `EV-S13` | - | Thấp |
-| **I4** Ghi đè Fill-Forward **VÔ ĐIỀU KIỆN** khi insert: `row_vals[sql_col_ff] = current_ff[sql_col_ff]` (`main_window.py:9823-9826`), không kiểm tra `row_vals` đã có giá trị hay chưa | GIỮ | `main_window.py:9823-9826`; `EV-S13` — khác cơ chế `ff_always_override or not rd.get(sql_col)` mà THDM (`_parse_section_excel_rows`) dùng: BOM ghi đè vô điều kiện 100% thời gian. `EV-S13` xác nhận: field Fill-Forward duy nhất của BOM là `ItemType` (`Ten_Excel="STT"`), và MỌI dòng dữ liệu đều nằm dưới ít nhất 1 section-header (`EV-S07`: 94/94 file có ≥1 dòng section-header/section) → giá trị `ItemType` tự resolve từ STT riêng của chính dòng đó (qua Pass 1b, xem `EV-S11`) **luôn luôn** bị ghi đè bởi STT chữ cái của section-header gần nhất. Đây không phải "Fill-Forward khi thiếu giá trị" theo nghĩa thông thường — bản chất là "gán category theo nhóm section", vốn ĐÚNG THIẾT KẾ cho ý nghĩa của `ItemType`, không phải bug. Theo đúng hướng dẫn plan-wide: dữ liệu cho thấy giá trị riêng của dòng LUÔN bị ghi đè → câu hỏi này được đưa ra business owner xác nhận, xem `### Q-07` ở §5 | - | Trung bình |
+| **I4** Ghi đè Fill-Forward **VÔ ĐIỀU KIỆN** khi insert: `row_vals[sql_col_ff] = current_ff[sql_col_ff]` (`main_window.py:9823-9826`), không kiểm tra `row_vals` đã có giá trị hay chưa | GIỮ | `main_window.py:9823-9826`; `EV-S13` — so với `C6` (nhánh `ff_always_override or not rd.get(sql_col)` của `_parse_section_excel_rows`, THDM-only, không chạy cho BOM ở tầng parse): BOM hoàn toàn KHÔNG có bước Fill-Forward nào ở tầng parse (`C6`), toàn bộ Fill-Forward của BOM diễn ra Ở TẦNG INSERT tại đúng dòng `I4` này, và ghi đè vô điều kiện 100% thời gian — khác hẳn ngữ nghĩa "chỉ ghi đè khi ô đang trống, trừ khi `ff_always_override`" mà `C6`/THDM mô tả. `EV-S13` xác nhận: field Fill-Forward duy nhất của BOM là `ItemType` (`Ten_Excel="STT"`), và MỌI dòng dữ liệu đều nằm dưới ít nhất 1 section-header (`EV-S07`: 94/94 file có ≥1 dòng section-header/section) → giá trị `ItemType` tự resolve từ STT riêng của chính dòng đó (qua Pass 1b, xem `EV-S11`) **luôn luôn** bị ghi đè bởi STT chữ cái của section-header gần nhất. Đây không phải "Fill-Forward khi thiếu giá trị" theo nghĩa thông thường — bản chất là "gán category theo nhóm section", vốn ĐÚNG THIẾT KẾ cho ý nghĩa của `ItemType`, không phải bug. Theo đúng hướng dẫn plan-wide: dữ liệu cho thấy giá trị riêng của dòng LUÔN bị ghi đè → câu hỏi này được đưa ra business owner xác nhận, xem `### Q-07` ở §5 | - | Trung bình |
 
 ### 4.J Trường header: EmployeeId / ParentDetailRowId_SO / đơn hàng
 
-_(Điền ở Plan 02.)_
+| Logic/rule con | Verdict (GIỮ/SỬA/BỎ) | Bằng chứng | Cách sửa (nếu SỬA) | Mức rủi ro |
+|---|---|---|---|---|
+| **J1** `_on_creator_change` (`main_window.py:4779-4800`): cache miss `UserId` → query DB qua `_lookup_user_id_by_emp`; `_current_creator_employee_id` lưu RIÊNG, không qua fallback UserId (commit `9dc3c92`) | GIỮ | `main_window.py:4779-4800`; `SQL-04` — sau `9dc3c92` (2026-09-21), `EmployeeId=1` vẫn là giá trị phổ biến nhất (48/82 dòng có EmployeeId) dù đã xuất hiện dải Id nhân viên thật đa dạng hơn; commit `9dc3c92` (§1, Chuỗi #6) | - | Trung bình |
+| **J2** `_resolve_header_field` UILookup `creator`/`creator_employee` (`main_window.py:8941-8944`); nhánh `product_id`/`order_id`/`period_id` là THDM, chỉ ghi nhận, không đụng | GIỮ | `main_window.py:8941-8944`; `SQL-04` — cùng nghi vấn `EmployeeId=1` như `J1`, chưa xác nhận (`Q-02`, đã ghi ở §5 từ Plan 01) là hợp lệ hay fallback cũ | - | Trung bình |
+| **J3** `_resolve_header_field` `CoDinh`/`HeThong` cho HEADER (`main_window.py:8918-8937`); `HeThong` chỉ xử lý `mac=='NOW'`, còn lại luôn `None` — ĐƠN GIẢN HƠN `D5a-g` (không có `AUTO_INC`/`BOMId`/`parent_fields`/copy-theo-tên) | GIỮ | `main_window.py:8918-8937`; `EV-M01` — cả 4 record `HeThong` của HEADER đều dùng macro `NOW`, không có record nào cần `AUTO_INC`/copy-theo-parent (HEADER là tài liệu gốc, không có "parent" hay `builtin_order` để copy) → nhánh đơn giản này ĐỦ và ĐÚNG cho dữ liệu mapping hiện hành, không phải thiếu sót | - | Thấp |
+| **J4** `ParentDetailRowId_SO` phải theo công thức `"Mục số\|@ParentBizDocId"` giống `DetailRowId_SO`, không được bằng thẳng mã đơn hàng (`main_window.py:10434-10436, 10599-10602`, commits `432fa70`, `78b36fc`) | SỬA | `main_window.py:10434-10436, 10599-10602`; `SQL-05` — tỷ lệ dòng sai (bằng mã đơn hàng thay vì công thức) giảm từ 7,6% (644 dòng, trước vá) xuống 5,6% (18 dòng, sau vá `78b36fc`) nhưng **KHÔNG về 0%**; commit `78b36fc` (§1, Chuỗi #7) đã vá 1 điểm nhưng bằng chứng cho thấy còn nhánh khác chưa được phủ | Rà lại TOÀN BỘ nơi `ParentDetailRowId_SO`/`DetailRowId_SO` được gán (không chỉ 2 điểm đã đọc ở `10434-10436`/`10599-10602`) bằng kỹ thuật enum call-site giống đã áp dụng cho `D2`/`D3`/`B5` trong tài liệu này — tìm nhánh còn gán thẳng `ParentBizDocId` thay vì qua công thức. Gốc rễ CHÍNH XÁC là gì chưa xác nhận được bằng bằng chứng hiện có — xem `Q-03` ở §5 (đã ghi từ Plan 01). Theo D-04 (§1): commit `78b36fc` đã vá đúng 1 nhánh gán sai, nhưng `SQL-05` xác nhận residual 5,6% dòng sai VẪN xuất hiện sau vá — đề xuất này khác `78b36fc` ở chỗ mở rộng phạm vi audit ra TOÀN BỘ call-site thay vì tin rằng 1 điểm đã vá là đủ. Requirement: MỚI | Cao |
+| **J5** `ParentBizDocId`/`BizDocId_SO` lấy thẳng từ đơn hàng đã chọn trên dropdown `_bom_selected_order_id` (`main_window.py:10437-10440, 10596-10598`, commits `f977b79`, `a9a891a`) | GIỮ | `main_window.py:10437-10440, 10596-10598`; `SQL-05` — 17/18 (sau vá) và 529/644 (trước vá) dòng có `ParentDetailRowId_SO == DetailRowId_SO` đúng — các trường hợp sai đo ở `SQL-05` đều là lỗi của `J4` (field khác), không phải bản thân phép gán trực tiếp này | - | Thấp |
+| **J6** `BOMDetailType` suy từ `_CONFIG.view_insert` + mapping `CoDinh` (`main_window.py:9495-9507`, `SECTION_TO_TYPE`) | GIỮ | `main_window.py:9495-9507`; `EV-M01` (cấu trúc `_CONFIG`/mapping xác nhận khớp code) | - | Thấp |
 
 ### 4.K Xuyên suốt: sanitize, exception, insert
 
-_(Điền ở Plan 02.)_
+| Logic/rule con | Verdict (GIỮ/SỬA/BỎ) | Bằng chứng | Cách sửa (nếu SỬA) | Mức rủi ro |
+|---|---|---|---|---|
+| **K1** `.strip()` không được bảo vệ trên giá trị thô từ Excel/DB — 69 vị trí trong phạm vi luồng BOM (xem `### 8.1`), commit `8a07639` đã vá phản ứng đúng 1 vị trí (`main_window.py:9847`, xem `G5`) sau khi gây crash Import thật | SỬA | `main_window.py:9847` (vị trí đã vá phản ứng), đầy đủ 69 vị trí còn lại tại `### 8.1` (file:dòng:hàm); `EV-S11` — giá trị non-str (int/float) thật sự chảy vào field kiểu text ở ≥5.000 lượt/42 file, xác nhận rủi ro không phải lý thuyết; commit `8a07639` (§1) là bằng chứng crash thật đã xảy ra đúng lớp lỗi này | Thay từng vị trí ở `### 8.1` bằng `sanitizer.safe_str()` (`core/sanitizer.py`, ARCH-04) — hàm dùng chung ép `str()` trước khi `.strip()`, thay vì để nguyên receiver không chắc chắn kiểu. Hiệu ứng quan sát được: lớp crash `8a07639` đã vá 1 điểm phản ứng, `K1` đóng nốt các điểm còn lại chủ động thay vì chờ crash tiếp theo mới vá. Requirement: FIX-03, ARCH-04 | Cao |
+| **K2** `except` không log và không re-raise — 43 khối trong phạm vi luồng BOM (xem `### 8.2`) | SỬA | `main_window.py:9855` (ví dụ đại diện, `_generate_bom_details`), đầy đủ 43 khối tại `### 8.2` (file:dòng:hàm:loại exception); `EV-S11` (nguồn dữ liệu thật — giá trị non-str/parse-fail — mà nhiều khối `except` này bảo vệ, ví dụ `_resolve_detail_row:9270,9282,9287,9292` — bị nuốt không log); trùng khớp trực tiếp với root-cause đã ghi nhận ở `PROJECT.md`/`.planning/codebase/CONCERNS.md` ("416 exception handler không log" ở `main_window.py`, "0 lần gọi logger" — nguyên nhân gốc chuỗi bug vá vụn v2.2.21→v2.2.25) | Với mỗi vị trí ở `### 8.2`: thêm `logger.exception(...)`/`self._log(...)` trước khi tiếp tục, HOẶC nếu im lặng thật sự an toàn (ví dụ probe optional-dependency) thì ghi rõ comment giải thích tại sao — theo đúng cách tiếp cận đã dùng cho `K1`. Requirement: OBS-01, OBS-02 | Cao |
+| **K3** Insert từng dòng riêng lẻ vào `B20BOMDetail` (`main_window.py:9937-9957`, không batch/bulk); header + tất cả detail được insert trong CÙNG 1 transaction, `conn.commit()` 1 lần ở cuối, `conn.rollback()` khi lỗi (`_run_insert_bg`, `main_window.py:10839-10874`) | SỬA | `main_window.py:9937-9957, 10839-10874`; `SQL-06` — 8/662 header (1,2%) không có detail nào, NHƯNG cả 8 đều CŨ (2026-03-11→06-29) — **đính chính bằng chứng**: ghi chú gốc của `SQL-06` ở §3 suy đoán "không có transaction bao trùm cả 2 bước" dựa trên hiện tượng orphan-header; đọc lại code trực tiếp cho thấy `_run_insert_bg` HIỆN TẠI đã bọc cả insert header + `_generate_bom_details` + `commit()` trong 1 transaction — 8 dòng orphan là lịch sử, không phải bằng chứng thiếu transaction ở code hiện hành | Phần transaction header+detail (đã đúng, giữ nguyên khi port). Phần còn thiếu là ARCH-03 (Staging First): hiện tại insert thẳng vào `B20BOM`/`B20BOMDetail` thật, không qua bảng Staging → Validate trước. `core/bravo_staging.py` (Phase 2) nên coi transaction hiện có là bước "Transfer" cuối cùng của pattern, thêm bước Staging+Validate TRƯỚC nó. `SQL-06`'s 8 orphan lịch sử là baseline để xác nhận không phát sinh orphan mới sau khi thêm Staging. Requirement: ARCH-03 | Trung bình |
+| **K4** `_sv` — render giá trị Python → SQL literal cho `export_only` (`main_window.py:9906-9935`), escape `'` → `''`, phân biệt kiểu theo `col_kieu` | GIỮ | `main_window.py:9906-9935`; `EV-S11` (giá trị non-str phải chảy qua đúng nhánh phân kiểu ở đây khi xuất SQL text) — chỉ dùng cho đường xuất preview/export, đường insert thật dùng tham số hóa (`cur.execute(sql_exec, exec_vals)`, `K3`), không đi qua `_sv`, không có rủi ro SQL injection ở đường insert thật | - | Thấp |
+| **K5** Điều kiện bỏ qua section: không thuộc `SECTION_TO_TYPE`, `df` rỗng, có cột `'Lỗi'`, không có `detail_recs` (`main_window.py:9558-9569`) | GIỮ | `main_window.py:9558-9569`; `EV-S01` — 14/94 file thiếu `BOM5` sinh `df` chứa cột `'Lỗi'` (xem `A5`), điều kiện này đúng chặn không cố insert dòng `'Lỗi'` như dữ liệu thật | - | Thấp |
 
 ## 5. Câu hỏi mở cho business owner
 
@@ -649,21 +671,95 @@ Hiện tại code không có quy tắc ưu tiên tường minh — `Id` nào "th
 
 Trả lời câu này quyết định nội dung cụ thể của ô "Cách sửa" cho G1 ở Phase 2.
 
+**Trả lời:** (chờ business owner)
+
 ### Q-02
 
 **Bối cảnh (`SQL-04`, EmployeeId):** sau khi `9dc3c92` (v2.2.22) vá lỗi EmployeeId hard-code=1, dữ liệu thật SAU vá vẫn cho `EmployeeId=1` là giá trị phổ biến nhất (48/82 dòng có EmployeeId, so với dải Id nhân viên thật khác chỉ 1-10 dòng mỗi Id). **Câu hỏi:** `EmployeeId=1` sau vá có phải là 1 nhân viên thật (ví dụ tài khoản admin/hệ thống) hay vẫn là 1 nhánh fallback cũ chưa được `9dc3c92` bao phủ hết? Cần business hoặc DBA xác nhận Id=1 trong bảng nhân viên tương ứng là ai.
+
+**Trả lời:** (chờ business owner)
 
 ### Q-03
 
 **Bối cảnh (`SQL-05`, ParentDetailRowId_SO):** sau khi `78b36fc` (v2.2.23) vá công thức ParentDetailRowId_SO, tỷ lệ dòng sai theo mẫu CŨ (bằng mã đơn hàng thay vì công thức Mục số) giảm từ 7.6% (644 dòng, trước vá) xuống 5.6% (18 dòng, sau vá) — KHÔNG về 0%. Mẫu sau-vá còn nhỏ (18 dòng) nên chưa chắc chắn về thống kê. **Câu hỏi:** có luồng import nào khác (THDM, hoặc 1 loại sản phẩm/section cụ thể) không đi qua đúng nhánh code mà `78b36fc` đã vá? Cần business xác nhận nguồn gốc của (các) dòng sai còn lại sau vá, hoặc executor cần thêm thời gian điều tra nếu Phase 2 quyết định port field này.
 
+**Trả lời:** (chờ business owner)
+
 ### Q-04
 
 **Bối cảnh (`EV-S11`/`EV-S13`, cột `Code` nhận giá trị non-str từ STT):** trường `Code` (BOM5, `Ten_Excel="STT"`, kiểu khai `varchar`) nhận giá trị int/float trực tiếp từ Excel ở phần lớn các dòng (không có cơ chế Fill-Forward ghi đè như `ItemType`, xem `EV-S13`). Chưa xác định được `Code` có được insert trực tiếp (rủi ro `.strip()`-crash giống `8a07639`) hay chỉ dùng làm khóa lookup nội bộ (không insert, không gọi `.strip()`). **Câu hỏi cho Phase 2 (không phải business — kỹ thuật):** đọc tiếp luồng dùng `BOM5.Code` sau `_resolve_detail_row` trước khi chốt verdict cho field này.
 
+**Trả lời:** (chờ Phase 2 — câu hỏi kỹ thuật, không cần business owner)
+
+### Q-05
+
+**Bối cảnh (`A5`, cảnh báo thiếu section):** `EV-S01` xác nhận `BOM5` thiếu ở 14/94 file mẫu thật (0/94 thiếu BOM2/3/4) — dữ liệu thật cho thấy BOM5 là section tùy chọn trong thực tế, nhưng code hiện tại cảnh báo `"Không tìm thấy sheet …"` giống hệt nhau cho MỌI section, không phân biệt bắt buộc/tùy chọn. **Câu hỏi:** ngoài BOM5, có section nào khác (hiện tại hoặc dự kiến thêm — BOM6, BOM7...) mà business coi là tùy chọn không? Trả lời câu này quyết định cột `Required`/danh sách tùy chọn cụ thể sẽ khai trong `_CONFIG` ở Phase 2 cho `A5`/`FIX-04`.
+
+**Trả lời:** (chờ business owner)
+
+### Q-06
+
+**Bối cảnh (`A4`, xung đột `global_meta` "sheet đầu tiên thắng"):** `EV-S12` — 229 xung đột trên 93/94 file giữa các khóa meta (`Kích thước`, `Số lượng`, `Hoàn thiện`, `Vật liệu`) đọc được từ các sheet BOM2-5 khác nhau của cùng 1 file; cơ chế hiện tại luôn lấy giá trị của sheet BOM2 (sheet đầu tiên duyệt qua) làm giá trị cuối cùng, kể cả khi sheet khác (vd BOM5) có giá trị khác nghĩa thật (ví dụ `Số lượng`="1 Hệ" ở BOM2 nhưng ="9" ở BOM5). **Câu hỏi:** với mỗi khóa meta hiện có (`Kích thước`, `Số lượng`, `Hoàn thiện`, `Vật liệu`), section nào là NGUỒN ĐÚNG khi các sheet có giá trị khác nhau? (Ví dụ: `Số lượng` nên luôn lấy từ BOM2, hay từ section nào đang active/được chọn insert?) Trả lời câu này quyết định nội dung cụ thể của "Cách sửa" cho `A4` ở Phase 2.
+
+**Trả lời:** (chờ business owner)
+
+### Q-07
+
+**Bối cảnh (`I4`, Fill-Forward `ItemType` ghi đè vô điều kiện):** `EV-S13` xác nhận field Fill-Forward duy nhất của BOM (`ItemType`) LUÔN bị ghi đè bởi STT chữ cái của section-header gần nhất khi insert, bất kể dòng dữ liệu đó tự có giá trị `ItemType` gì (resolve từ STT riêng của chính nó). 94/94 file có ít nhất 1 dòng section-header/section, nên override này thực thi 100% thời gian trong dữ liệu mẫu — nói cách khác, `ItemType` không hoạt động như "điền khi thiếu" theo nghĩa Fill-Forward thông thường mà như "gán category theo nhóm section" (STT chữ cái A/B/C... → category). **Câu hỏi:** đây có đúng là ý nghĩa nghiệp vụ mong muốn của `ItemType` không (mỗi dòng thuộc nhóm section nào quyết định `ItemType`, không phải giá trị STT số riêng của dòng)? Nếu đúng, `I4` port nguyên trạng vào `core/`. Nếu KHÔNG — nếu có kịch bản business muốn STT số riêng của dòng override lại nhóm section — cần đặc tả lại quy tắc trước khi Phase 2 viết `core/`.
+
+**Trả lời:** (chờ business owner)
+
+### Ghi chú: các dòng SỬA/BỎ chỉ có bằng chứng EV-M (census mapping), theo quy tắc bằng chứng (D-02/D-03)
+
+Các dòng dưới đây có Bằng chứng **chỉ** dựa trên `EV-M01` (census mapping production) + đọc/đối chiếu code, KHÔNG có dữ liệu mẫu (`EV-Snn`) hay SQL thật (`SQL-nn`) trực tiếp chứng minh — liệt kê tường minh ở đây theo đúng quy tắc "SỬA/BỎ chỉ có bằng chứng EV-M phải được liệt kê ở §5":
+
+- **`D2`** (BỎ — nhánh `Excel` của `_resolve_row_mapping` không chạy cho BOM): bằng chứng là grep toàn repo xác nhận call-site (cross-reference code, không phải dữ liệu mẫu) + `EV-M01`.
+- **`D3`** (BỎ — nhánh `Bien_doi` của `_resolve_row_mapping` không chạy cho BOM): cùng bằng chứng call-site như `D2`.
+- **`D7`** (BỎ — `MucLookup` không có record BOM/HEADER nào): bằng chứng là `EV-M01` census (0 record `MucLookup`), không có mẫu Excel nào chứng minh trực tiếp field bị ảnh hưởng (vì không có field nào cả).
+- **`E5`** (SỬA — `EMPTY` macro không phân biệt kiểu ngày ở Pass 1b): bằng chứng là so sánh code trực tiếp giữa `_resolve_detail_row` và `_resolve_row_mapping` + `EV-M01` (tần suất macro `EMPTY` gặp thật); KHÔNG có sample/SQL nào xác nhận đã có field ngày BOM thực sự bị lỗi này — rủi ro tiềm ẩn (latent), chưa quan sát được crash thật trong 94 file mẫu hoặc SQL thật.
+
 ## 6. Tổng hợp & ánh xạ sang Phase 2
 
-_(Điền ở Plan 02.)_
+**Tổng số dòng §4:** 90 (đúng bằng số ID bắt buộc tối thiểu — không thêm dòng phụ ngoài danh sách bắt buộc của Plan 02).
+
+**GIỮ: 71 · SỬA: 16 · BỎ: 3**
+
+### Bảng ánh xạ SỬA/BỎ → yêu cầu Phase 2
+
+| Row ID | Verdict | Mức rủi ro | Yêu cầu Phase 2 | Ghi chú |
+|---|---|---|---|---|
+| `A4` | SỬA | Cao | MỚI | `global_meta` "sheet đầu tiên thắng" → resolve theo khóa; quy tắc cụ thể chờ `Q-06` |
+| `A5` | SỬA | Trung bình | FIX-04 | Thêm cờ bắt buộc/tùy chọn cho section trong `_CONFIG`; danh sách tùy chọn cụ thể chờ `Q-05` |
+| `A6` | SỬA | Trung bình | OBS-01 | Thêm log cho 2 khối `except` nuốt lỗi khi mở workbook lần 2/3 |
+| `B2` | SỬA | Trung bình | FIX-02 | Provenance-flag cho cột forward-fill + drop cột orphan không khớp `Ten_Excel` nào |
+| `B5` | SỬA | Trung bình | ARCH-01 | Trích cơ chế match 2-pass trong `_resolve_detail_row` thành hàm build-column-map dùng chung, chạy 1 lần/section |
+| `C2` | SỬA | Cao | MỚI | Thu hẹp điều kiện khớp `FOOTER_KEYWORDS` (ô ngắn + STT rỗng) thay vì substring toàn dòng — lớp bug `817bbbe` từng vá phản ứng |
+| `C10` | SỬA | Trung bình | ARCH-04 | Gộp 3 bản `normalize_stt` độc lập thành 1 hàm `core/sanitizer.py` |
+| `D2` | BỎ | Thấp | — | Nhánh `Excel` của `_resolve_row_mapping` không chạy cho BOM (chỉ THDM) — không port |
+| `D3` | BỎ | Thấp | — | Nhánh `Bien_doi` của `_resolve_row_mapping` không chạy cho BOM (chỉ THDM) — không port |
+| `D7` | BỎ | Thấp | — | `MucLookup` không có record BOM/HEADER nào — không port |
+| `E5` | SỬA | Trung bình | MỚI | Đồng nhất xử lý macro `EMPTY` cho field ngày giữa Pass 1b và `_resolve_row_mapping` |
+| `E6` | SỬA | Trung bình | OBS-01, OBS-02 | Log khi ép kiểu date/number/int thất bại, trước khi `raw=None` |
+| `G1` | SỬA | Cao | FIX-01 | Thêm `ORDER BY` xác định khi build `_mkt_cache`; quy tắc ưu tiên cụ thể chờ `Q-01` |
+| `G2` | SỬA | Cao | OBS-01 | Log khi build `_mkt_cache` thất bại (hiện `except Exception: pass` hoàn toàn im lặng) |
+| `I2` | SỬA | Trung bình | ARCH-01 | Gộp rule nhận diện section-header (parse-time và insert-time) thành 1 hàm dùng chung |
+| `J4` | SỬA | Cao | MỚI | Rà lại toàn bộ nơi gán `ParentDetailRowId_SO`/`DetailRowId_SO`; gốc rễ residual 5,6% lỗi chờ `Q-03` |
+| `K1` | SỬA | Cao | FIX-03, ARCH-04 | Thay 69 vị trí `.strip()` không bảo vệ (§8.1) bằng `sanitizer.safe_str()` |
+| `K2` | SỬA | Cao | OBS-01, OBS-02 | Thêm log cho 43 khối `except` không log (§8.2) |
+| `K3` | SỬA | Trung bình | ARCH-03 | Thêm bước Staging+Validate trước transaction insert hiện có (đã đúng, giữ nguyên làm bước Transfer) |
+
+### FIX-01..FIX-04 — xác nhận có mặt
+
+- **FIX-01** (`_mkt_cache` ORDER BY): dòng `G1`.
+- **FIX-02** (`_build_headers` forward-fill vô hạn): dòng `B2`.
+- **FIX-03** (`.strip()` → `sanitizer.safe_str()`): dòng `K1`.
+- **FIX-04** (cảnh báo section tùy chọn): dòng `A5`.
+
+Không có FIX nào bị bằng chứng bác bỏ — cả 4 đều được xác nhận là vấn đề thật bằng dữ liệu mẫu/SQL thật (`EV-S01`, `EV-S03`, `EV-S06`(gián tiếp qua cùng cơ chế với K1's crash evidence)/`EV-S11`, `SQL-01`).
+
+### Danh sách các dòng Mức rủi ro = Cao
+
+`A4`, `C2`, `G1`, `G2`, `G3`, `G4`, `J4`, `K1`, `K2` — 9 dòng. `G3`/`G4` là GIỮ (cơ chế áp dụng/lookup đúng thiết kế) nhưng thừa hưởng rủi ro Cao của `G1` vì cùng nằm trên code path MKT-fallback đã xác nhận chiếm 84% lưu lượng thật (`SQL-07`).
 
 ## 7. Xác nhận của business owner
 
@@ -671,4 +767,141 @@ _(Điền ở Plan 03 — ghi lại xác nhận bằng văn bản, kèm ngày, t
 
 ## 8. Phụ lục
 
-_(Điền ở Plan 02, nếu cần.)_
+Nguồn: `tests/tmp/ba_bom_flow_sweep.py` — script AST một-lần, read-only (không import/chạy code mục tiêu, không ghi vào bất kỳ file nào dưới `v3/Tools/`), quét đúng các hàm luồng BOM liệt kê ở Task 3 Step 1 của `01-02-PLAN.md` (loại trừ `_thdm_*`, helper THDM-only, và dialog helper). Kết quả dump ra `tests/tmp/ba_bom_flow_sweep.json`, đọc 1 lần để viết §8.1/§8.2 dưới đây; cả 2 file tạm đã bị xoá ở Task 3 Step 6 (xem xác nhận cuối tài liệu).
+
+### 8.1 Vị trí .strip() rủi ro (K1)
+
+Tổng **69 vị trí `.strip()` không được bảo vệ tường minh** (receiver là Name/Attribute/Subscript/Call khác `str()`, hoặc `(x or ...).strip()` không ép `str()` trước — CHÍNH LÀ lớp lỗi mà commit `8a07639` đã vá phản ứng tại 1 điểm `main_window.py:9847`, xem `G5`) và **41 vị trí đã tự bảo vệ** (`str(x).strip()` ép kiểu tường minh — không thể crash bất kể kiểu dữ liệu đầu vào).
+
+**bom_parser.py** — unguarded: 16, guarded (đã ép `str()`): 22
+
+| Dòng | Hàm | Snippet |
+|---|---|---|
+| 82 | `_load_sheet_config` | `contains  = [x.strip().upper() for x in str(row[3] or '').split(',') if x.strip(…` |
+| 83 | `_load_sheet_config` | `excludes  = [x.strip().upper() for x in str(row[4] or '').split(',') if x.strip(…` |
+| 422 | `_run_row_sp_hooks` | `cond       = hook.get('condition', '').strip()` |
+| 431 | `_run_row_sp_hooks` | `h_sp   = hook.get('sp_name', '').strip()` |
+| 432 | `_run_row_sp_hooks` | `h_par  = hook.get('params', '').strip()` |
+| 433 | `_run_row_sp_hooks` | `h_outs = [f.strip() for f in hook.get('outputfields', '').split(',') if f.strip(…` |
+| 436 | `_run_row_sp_hooks` | `ph = ph.strip()` |
+| 441 | `_run_row_sp_hooks` | `v = v.strip()` |
+| 425 | `_run_row_sp_hooks` | `should_run = not row_vals.get(cond[6:-1].strip())` |
+| 427 | `_run_row_sp_hooks` | `should_run = bool(row_vals.get(cond[9:-1].strip()))` |
+| 440 | `_run_row_sp_hooks` | `k = k.strip().lstrip('@')` |
+| 1305 | `_resolve_row_mapping` | `or (isinstance(val, str) and val.strip() == ''))` |
+| 1327 | `_resolve_row_mapping` | `val = val.strip()` |
+
+**mapping_loader.py** — unguarded: 6, guarded (đã ép `str()`): 0
+
+| Dòng | Hàm | Snippet |
+|---|---|---|
+| 78 | `_load_section_rows` | `df = df[df['Section'].astype(str).str.strip() == section]` |
+| 234 | `build_meta_keys_from_mapping` | `ten = rec.get('ten_excel', '').strip()` |
+| 243 | `build_meta_keys_from_mapping` | `part = part.strip()` |
+| 252 | `build_meta_keys_from_mapping` | `part = part.strip()` |
+| 269 | `build_cell_specs_from_mapping` | `ten = rec.get('ten_excel', '').strip()` |
+| 272 | `build_cell_specs_from_mapping` | `coord = ten.split('\|')[0].strip()` |
+
+**main_window.py** — unguarded: 47, guarded (đã ép `str()`): 19
+
+| Dòng | Hàm | Snippet |
+|---|---|---|
+| 4800 | `_on_creator_change` | `self.cmb_creator.set(selected_name.split("\|")[0].strip())` |
+| 8969 | `_resolve_header_field` | `for _p in [p.strip() for p in ten_excel.split('\|')]:` |
+| 8984 | `_resolve_header_field` | `_te = _te.strip()` |
+| 9020 | `_resolve_header_field` | `s = raw.strip()` |
+| 9084 | `_build_bom_detail_caches` | `for _ss1 in [f.strip() for f in re.split(r'[\|,]', ss) if f.strip()]:` |
+| 9445 | `_resolve_detail_row` | `sp_name2  = cfg2.get('sp_name', '').strip()` |
+| 9446 | `_resolve_detail_row` | `params_s2 = cfg2.get('params', '').strip()` |
+| 9196 | `_resolve_detail_row` | `_t = _t.strip()` |
+| 9258 | `_resolve_detail_row` | `or (isinstance(raw, str) and raw.strip() == ''))` |
+| 9314 | `_resolve_detail_row` | `_code_val, _name_val = _code_val.strip(), _name_val.strip()` |
+| 9430 | `_resolve_detail_row` | `out_fs = [f.strip() for f in cfg2.get('outputfields', '').split(',') if f.strip(…` |
+| 9447 | `_resolve_detail_row` | `fallback2 = cfg2.get('fallback', '').strip() or None` |
+| 9448 | `_resolve_detail_row` | `out_fs2   = [f.strip() for f in cfg2.get('outputfields', '').split(',') if f.str…` |
+| 9298 | `_resolve_detail_row` | `_bien_doi = _nan_str(rec.get('bien_doi', '')).strip().upper()` |
+| 9346 | `_resolve_detail_row` | `_vt_val, _ct_val = _vt_val.strip(), _ct_val.strip()` |
+| 9406 | `_resolve_detail_row` | `if sql_col == 'Unit' and (raw is None or (isinstance(raw, str) and not raw.strip…` |
+| 9304 | `_resolve_detail_row` | `raw = raw.strip()` |
+| 9387 | `_resolve_detail_row` | `and raw.strip() in {'_', '--', '-', 'x', 'n/a'}` |
+| 9456 | `_resolve_detail_row` | `ph = ph.strip()` |
+| 9459 | `_resolve_detail_row` | `kh = kh.strip().lstrip('@'); vh = vh.strip()` |
+| 9988 | `_run_batch_hook_grouped` | `cond       = hook.get('condition', '').strip()` |
+| 9989 | `_run_batch_hook_grouped` | `xml_param  = hook.get('xmlparam', '').strip()` |
+| 9990 | `_run_batch_hook_grouped` | `xml_tag    = hook.get('xmltag', '').strip()` |
+| 9991 | `_run_batch_hook_grouped` | `xml_fields = [f.strip() for f in hook.get('xmlfields', '').split(',') if f.strip…` |
+| 9992 | `_run_batch_hook_grouped` | `h_outs     = [f.strip() for f in hook.get('outputfields', '').split(',') if f.st…` |
+| 10006 | `_run_batch_hook_grouped` | `cond_field = cond[6:-1].strip()` |
+| 10059 | `_run_batch_hook_grouped` | `ph = ph.strip()` |
+| 10063 | `_run_batch_hook_grouped` | `k = k.strip().lstrip('@'); v = v.strip()` |
+| 10009 | `_run_batch_hook_grouped` | `cond_field = cond[9:-1].strip()` |
+| 10047 | `_run_batch_hook_grouped` | `('+' in _fval or _fval.strip() in {'_', '--', '-', 'x', 'n/a'}):` |
+| 10633 | `_header_resolve_bg` | `sp_name  = sp_cfg.get('sp_name', '').strip()` |
+| 10634 | `_header_resolve_bg` | `params_s = sp_cfg.get('params', '').strip()` |
+| 10679 | `_header_resolve_bg` | `_vsql   = _v.get('sql', '').strip()` |
+| 10680 | `_header_resolve_bg` | `_vparam = _v.get('params', '').strip()` |
+| 10681 | `_header_resolve_bg` | `_warn_m = _v.get('warningmessage', '').strip()` |
+| 10635 | `_header_resolve_bg` | `fallback = sp_cfg.get('fallback', '').strip() or None` |
+| 10685 | `_header_resolve_bg` | `_params = [row.get(p.strip()) for p in _vparam.split(',') if p.strip()]` |
+
+### 8.2 except không log (K2)
+
+Tổng **43 khối `except` không gọi logger và không re-raise**, trong đúng phạm vi các hàm luồng BOM (không tính THDM/dialog). "Không log" = thân khối không chứa lời gọi nào tới `_log`/`logger`/`logging`/`log_fn`/`self._log` VÀ không có `raise` nào — bao gồm cả `except: pass` và `except Exception as e:` mà biến `e` không được dùng để log (chỉ dùng nội bộ, ví dụ format traceback không ghi ra đâu).
+
+**bom_parser.py** — except không log: 12
+
+| Dòng | Hàm | Loại exception | Snippet |
+|---|---|---|---|
+| 204 | `_extract_cell_meta` | `ValueError` | `except ValueError:` |
+| 565 | `_parse_sheet` | `(ValueError, TypeError)` | `except (ValueError, TypeError): return True` |
+| 702 | `_is_encrypted_excel` | `zipfile.BadZipFile` | `except zipfile.BadZipFile:` |
+| 706 | `_is_encrypted_excel` | `Exception` | `except Exception:` |
+| 694 | `_is_encrypted_excel` | `Exception` | `except Exception:` |
+| 735 | `parse_bom_file` | `Exception` | `except Exception:` |
+| 757 | `parse_bom_file` | `Exception` | `except Exception:` |
+| 1339 | `_resolve_row_mapping` | `(ValueError, TypeError)` | `except (ValueError, TypeError):` |
+| 1341 | `_resolve_row_mapping` | `(ValueError, TypeError)` | `except (ValueError, TypeError): row_out[sql_col] = mac` |
+| 1317 | `_resolve_row_mapping` | `(ValueError, TypeError)` | `except (ValueError, TypeError):` |
+| 1319 | `_resolve_row_mapping` | `(ValueError, TypeError)` | `except (ValueError, TypeError): val = mac` |
+| 565 | `_is_non_numeric` | `(ValueError, TypeError)` | `except (ValueError, TypeError): return True` |
+
+**mapping_loader.py** — except không log: 3
+
+| Dòng | Hàm | Loại exception | Snippet |
+|---|---|---|---|
+| 37 | `_load_config` | `(ValueError, TypeError)` | `except (ValueError, TypeError):` |
+| 160 | `load_mapping` | `Exception` | `except Exception as e:` |
+| 139 | `load_mapping` | `(ValueError, TypeError)` | `except (ValueError, TypeError):` |
+
+**main_window.py** — except không log: 28
+
+| Dòng | Hàm | Loại exception | Snippet |
+|---|---|---|---|
+| 7316 | `_log_bom_lookup_fail` | `Exception` | `except Exception:` |
+| 8928 | `_resolve_header_field` | `(ValueError, TypeError)` | `except (ValueError, TypeError): pass` |
+| 8930 | `_resolve_header_field` | `(ValueError, TypeError)` | `except (ValueError, TypeError): pass` |
+| 9042 | `_resolve_header_field` | `(ValueError, TypeError)` | `except (ValueError, TypeError): raw = None` |
+| 9047 | `_resolve_header_field` | `(ValueError, TypeError)` | `except (ValueError, TypeError): raw = None` |
+| 9030 | `_resolve_header_field` | `(ValueError, TypeError)` | `except (ValueError, TypeError):` |
+| 9124 | `_find_existing_btp_code` | `Exception` | `except Exception:` |
+| 9415 | `_resolve_detail_row` | `Exception` | `except Exception:` |
+| 9287 | `_resolve_detail_row` | `(ValueError, TypeError)` | `except (ValueError, TypeError): raw = None` |
+| 9292 | `_resolve_detail_row` | `(ValueError, TypeError)` | `except (ValueError, TypeError): raw = None` |
+| 9270 | `_resolve_detail_row` | `(ValueError, TypeError)` | `except (ValueError, TypeError):` |
+| 9282 | `_resolve_detail_row` | `(ValueError, TypeError)` | `except (ValueError, TypeError): pass` |
+| 9272 | `_resolve_detail_row` | `(ValueError, TypeError)` | `except (ValueError, TypeError): raw = mac` |
+| 9537 | `_generate_bom_details` | `Exception` | `except Exception:` |
+| 9553 | `_generate_bom_details` | `Exception` | `except Exception:` |
+| 9504 | `_generate_bom_details` | `(ValueError, TypeError)` | `except (ValueError, TypeError):` |
+| 9855 | `_generate_bom_details` | `Exception` | `except Exception:` |
+| 10869 | `_run_insert_bg` | `Exception` | `except Exception as e:` |
+| 10890 | `_run_insert_bg` | `Exception` | `except Exception:` |
+| 10872 | `_run_insert_bg` | `Exception` | `except Exception:` |
+| 10883 | `_run_insert_bg` | `Exception` | `except Exception:` |
+| 10706 | `_header_resolve_bg` | `Exception` | `except Exception:` |
+| 10641 | `_header_resolve_bg` | `Exception` | `except Exception as e:` |
+| 10699 | `_header_resolve_bg` | `Exception` | `except Exception as _ve:` |
+| 10811 | `_on_header_resolved` | `Exception` | `except Exception:` |
+| 10725 | `_on_header_resolved` | `Exception` | `except Exception:` |
+| 10730 | `_on_header_resolved` | `Exception` | `except Exception:` |
+| 10799 | `_on_header_resolved` | `Exception` | `except Exception:` |
