@@ -718,6 +718,19 @@ Các dòng dưới đây có Bằng chứng **chỉ** dựa trên `EV-M01` (cens
 - **`D7`** (BỎ — `MucLookup` không có record BOM/HEADER nào): bằng chứng là `EV-M01` census (0 record `MucLookup`), không có mẫu Excel nào chứng minh trực tiếp field bị ảnh hưởng (vì không có field nào cả).
 - **`E5`** (SỬA — `EMPTY` macro không phân biệt kiểu ngày ở Pass 1b): bằng chứng là so sánh code trực tiếp giữa `_resolve_detail_row` và `_resolve_row_mapping` + `EV-M01` (tần suất macro `EMPTY` gặp thật); KHÔNG có sample/SQL nào xác nhận đã có field ngày BOM thực sự bị lỗi này — rủi ro tiềm ẩn (latent), chưa quan sát được crash thật trong 94 file mẫu hoặc SQL thật.
 
+### Q-08 — Chiến lược "ép chuẩn Excel, không đoán" cho các logic đoán-vì-file-lộn-xộn
+
+**Bối cảnh:** Rà soát lại §4 sau khi bảng verdict đã ra, phát hiện 1 nhóm logic có đặc điểm chung: tồn tại KHÔNG PHẢI vì nghiệp vụ cần nó, mà vì code đang **đoán ý nghĩa dữ liệu từ 1 file Excel không có chuẩn tường minh**, thay vì bắt buộc user sửa file/template cho đúng chuẩn (đúng tinh thần "Ép chuẩn User — Chặn cứng Data rác" đã thống nhất từ đầu dự án). Đây là ghi chú thảo luận, **CHƯA đổi verdict** trong §4 — business owner quyết định ở Plan 03 sau khi bàn kỹ từng điểm:
+
+1. **Nhóm F — BTP detection (F7-F11, `main_window.py:9717-9765`)**: đoán 1 dòng trống-Tên-vật-tư có phải bán-thành-phẩm không, dựa trên có Tên chi tiết/dòng con/dấu "+"/dòng cha có vật tư thật hay không (đệ quy quét ngược). Đề xuất thảo luận: **BỎ toàn bộ heuristic**, thay bằng 1 cột tường minh trong template Excel (ví dụ "Loại dòng: NVL / BTP") — reject dòng thiếu cột này thay vì đoán.
+2. **B2/B5/E4 — suffix-match 2 lần khớp header bị merge** (71/94 file phải dựa vào đoán hậu tố, ví dụ `SLg_Tên_Vật_Tư` → "Tên vật tư"): đề xuất thay đoán-theo-hậu-tố bằng 1 danh sách alias tường minh khai trong mapping, reject tên cột không nằm trong danh sách.
+3. **C2 — footer detection bằng từ khóa** (2.573 dòng bị cắt vĩnh viễn trên 94/94 file, cùng lớp lỗi `817bbbe` từng vá 1 lần rồi tái diễn): đề xuất thêm dấu hiệu kết-thúc-bảng tường minh trong template thay vì đoán theo từ khóa.
+4. **A4 — `global_meta` "sheet đầu tiên thắng"** (229 xung đột/93 file, vd "Số lượng"="1 Hệ" ở BOM2 nhưng ="9" ở BOM5, giá trị khác nghĩa thật bị bỏ qua âm thầm): đề xuất cảnh báo bắt buộc khi sheet xung đột thay vì tự chọn sheet đầu.
+5. **E10 — giá trị placeholder rác trong Tên vật tư/Tên chi tiết** (`_`, `--`, `-`, `x`, `n/a`; 63 lần trên 12/94 file): đề xuất bắt ô trống thật, cảnh báo nếu gặp ký tự lạ, không coi các ký tự này là "= rỗng" ngầm định.
+6. **`#NAME?` lỗi công thức Excel lọt vào tên cột** (`EV-S03`, 2/94 file, ví dụ cột `SLSP_#NAME?`): đề xuất reject thẳng file có lỗi công thức ở vùng header thay vì cố đọc tiếp.
+
+**Trả lời:** (chờ business owner — thảo luận sau, không chặn tiến độ Plan 02/03 hiện tại)
+
 ## 6. Tổng hợp & ánh xạ sang Phase 2
 
 **Tổng số dòng §4:** 90 (đúng bằng số ID bắt buộc tối thiểu — không thêm dòng phụ ngoài danh sách bắt buộc của Plan 02).
