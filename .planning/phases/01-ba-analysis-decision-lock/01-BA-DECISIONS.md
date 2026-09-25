@@ -359,6 +359,148 @@ ORDER BY m.Code
 
 Chứng minh rủi ro KHÔNG chỉ lý thuyết: `MKT_SIMILI` (Id cũ nhất trong nhóm C, `86047`) chưa bao giờ "thắng" — 0 dòng BOM nào dùng Id này, tức nó không bao giờ được `_mkt_cache` chọn dù luôn có mặt trong view. `MKT_VAI` (27 dòng) và `MKT_DA` (227 dòng) đều xuất hiện là "người thắng" ở các thời điểm khác nhau → thứ tự trả về của SQL Server **không ổn định giữa các lần chạy ứng dụng khác nhau**, không phải "luôn chọn sai 1 mã cố định". Tương tự nhóm NULL: `MKT_COKHI` thắng 9 lần, `MKT_KINH` thắng 63 lần — đây chính là hiện tượng "SQL sinh BTP rác hoặc nhận nhầm MKT_KINH" mà người dùng mô tả ban đầu.
 
+### SQL-02 — Trùng mã BTP tái dùng (E9)
+
+Dùng đúng predicate của `_find_existing_btp_code` (`main_window.py:9116-9121`: `IsActive = 1`, `Name`, `Code LIKE item_code0 + '.%'`, `ORDER BY Id DESC`). "item_code0 prefix" = phần Code trước dấu chấm cuối cùng (ví dụ `LO.CH.AS11.21.0005` → prefix `LO.CH.AS11.21`, `.0005` là số thứ tự do USP sinh).
+
+```sql
+SELECT TOP 20 Code, Name, IsActive FROM B20Item WHERE Code LIKE '%.%' AND IsActive = 1 ORDER BY Id DESC
+```
+**Kết quả:** xác nhận đúng mẫu (`LO.CH.AS11.21.0005`, `TP_0004.2.2.0052`, …).
+
+```sql
+SELECT COUNT(*) AS collision_groups, SUM(n) AS total_dup_rows
+FROM (
+  SELECT LEFT(Code, LEN(Code) - CHARINDEX('.', REVERSE(Code))) AS item_code0_prefix, Name, COUNT(*) AS n
+  FROM B20Item WHERE IsActive = 1 AND Code LIKE '%.%'
+  GROUP BY LEFT(Code, LEN(Code) - CHARINDEX('.', REVERSE(Code))), Name
+  HAVING COUNT(*) > 1
+) x
+```
+**Kết quả:** `collision_groups = 477`, `total_dup_rows = 1607`.
+
+```sql
+SELECT TOP 10 LEFT(Code, LEN(Code) - CHARINDEX('.', REVERSE(Code))) AS item_code0_prefix, Name, COUNT(*) AS n, MIN(Id) AS min_id, MAX(Id) AS max_id
+FROM B20Item WHERE IsActive = 1 AND Code LIKE '%.%'
+GROUP BY LEFT(Code, LEN(Code) - CHARINDEX('.', REVERSE(Code))), Name
+HAVING COUNT(*) > 1
+ORDER BY n DESC
+```
+**Kết quả (top 10 nhóm trùng, n = số Id active cùng prefix+Name):** `RO.FF.02A.R.1.1` / "" / n=24; `SP_065.1` / "CHI-CANH_03_005" / n=20; `SP_065.1` / "KTHT-HONG_03_001" / n=20; `SP_065.1` / "KTHT-HONG_03_002" / n=20; `SP_065.1` / "KTHT-HONG_04_001" / n=20; `SP_065.1` / "KTHT-HONG_04_002" / n=20; `SP_065.1` / "KTHT-NOC_05_001" / n=20; `SP_065.1` / "P1A-TU" / n=20; `SP_065.1` / "P1B-KHUNGCHAN" / n=20; `SP_065.1` / "P1C-KHUNGDUOI" / n=20.
+
+Với `ORDER BY Id DESC` + `TOP 1`, "tái dùng mã BTP" của E9 luôn chọn Id lớn nhất trong nhóm — xác định (deterministic), khác hẳn G1 (không có `ORDER BY`). 477 nhóm/1607 dòng trùng cho thấy việc "phải chọn" xảy ra thường xuyên, nhưng quy tắc chọn ở đây rõ ràng, không phải rủi ro cùng loại với G1.
+
+### SQL-03 — Metadata usp_B20BOM_Create_ItemCode (H8, F7-F11)
+
+```sql
+SELECT name, type_desc FROM sys.objects WHERE name LIKE '%B20BOM_Create_ItemCode%'
+```
+**Kết quả:** 1 dòng — `name=usp_B20BOM_Create_ItemCode, type_desc=SYNONYM` (trong DB hiện tại `B10_Boho_Data`).
+
+```sql
+SELECT name, base_object_name FROM sys.synonyms WHERE name = 'usp_B20BOM_Create_ItemCode'
+```
+**Kết quả:** `base_object_name = [B10_Boho].[dbo].[usp_B20BOM_Create_ItemCode]` — synonym trỏ sang **DB khác** (`B10_Boho`, không phải `B10_Boho_Data` đang kết nối, cũng không phải `BOMTool`).
+
+```sql
+SELECT p.parameter_id, p.name, t.name AS type_name, p.max_length, p.is_output
+FROM [B10_Boho].sys.parameters p
+JOIN [B10_Boho].sys.types t ON p.user_type_id = t.user_type_id
+WHERE p.object_id = OBJECT_ID('[B10_Boho].[dbo].[usp_B20BOM_Create_ItemCode]')
+ORDER BY p.parameter_id
+```
+**Kết quả:** 9 tham số — `@_B20BOMDetail` (xml), `@_B20BOMDetail2` (xml), `@_B20BOMDetail1` (xml), `@_ItemId0` (int), `@_ProductId` (int), `@_BizDocId_SO` (varchar 24), `@_ParentBizDocId` (varchar 524), `@_DetailRowId_SO` (varchar 524), `@_BranchCode` (varchar 24). Khớp đúng tên/thứ tự tham số mà SP_HOOK ở mapping truyền vào (`EV-M01`).
+
+```sql
+SELECT OBJECT_DEFINITION(OBJECT_ID('[B10_Boho].[dbo].[usp_B20BOM_Create_ItemCode]')) AS proc_def
+```
+**Kết quả:** `NULL` — không có quyền `VIEW DEFINITION` trên login hiện tại cho đối tượng này. Không suy đoán nội dung SP khi không xem được định nghĩa.
+
+### SQL-04 — Phân bố EmployeeId trên B20BOM (J1, J2)
+
+Ngày commit `9dc3c92` (v2.2.22) = `2026-09-21` (xác nhận qua `git log -1 --format=%ad --date=short 9dc3c92`). Cột `EmployeeId` (int), `CreatedAt` (datetime) đã xác nhận tồn tại đúng tên qua `INFORMATION_SCHEMA.COLUMNS` trước khi query.
+
+```sql
+SELECT CASE WHEN CreatedAt < '2026-09-21' THEN 'before_9dc3c92' ELSE 'on_or_after_9dc3c92' END AS period,
+       EmployeeId, COUNT(*) AS n
+FROM B20BOM
+GROUP BY CASE WHEN CreatedAt < '2026-09-21' THEN 'before_9dc3c92' ELSE 'on_or_after_9dc3c92' END, EmployeeId
+ORDER BY period, n DESC
+```
+**Kết quả:**
+- TRƯỚC (2026-09-21): `EmployeeId=1` → 264; `NULL` → 201; `5` → 61; `62189` → 23; `303` → 22; `70529` → 3; `70053` → 2.
+- SAU (≥2026-09-21): `EmployeeId=1` → 48; `NULL` → 16; `62189` → 10; `62207` → 4; `62185` → 4; `21387` → 3; `62285` → 1.
+
+`EmployeeId=1` vẫn là giá trị phổ biến nhất SAU khi `9dc3c92` vá, nhưng sau vá đã xuất hiện dải Id nhân viên thật đa dạng hơn (62189/62207/62185/21387/62285) — trước vá gần như chỉ có 1/NULL/5. **Chưa xác nhận** `EmployeeId=1` sau vá là hợp lệ (nhân viên Id=1 có thật) hay vẫn là 1 fallback khi không ai được chọn — xem `Q-02` ở §5.
+
+### SQL-05 — ParentDetailRowId_SO so với công thức Mục số (J4)
+
+Ngày commit `78b36fc` = `2026-09-22`.
+
+```sql
+SELECT TOP 20 Id, CreatedAt, ParentDetailRowId_SO, DetailRowId_SO, ParentBizDocId, BizDocId_SO
+FROM B20BOM WHERE CreatedAt >= '2026-09-22' ORDER BY Id DESC
+```
+**Kết quả:** 18 dòng trả về (chưa đủ lịch sử sau-vá để có 20). 17/18 dòng có `ParentDetailRowId_SO == DetailRowId_SO` (đúng theo công thức Mục số). 1 dòng (`Id=687`, tạo `2026-09-22T10:38:43`) có `ParentDetailRowId_SO == ParentBizDocId == "11036174FO"` — đúng mẫu lỗi CŨ, xảy ra SAU commit vá.
+
+```sql
+SELECT SUM(CASE WHEN ParentDetailRowId_SO = DetailRowId_SO THEN 1 ELSE 0 END) AS matches_detail_row,
+       SUM(CASE WHEN ParentDetailRowId_SO = ParentBizDocId THEN 1 ELSE 0 END) AS matches_order_code,
+       SUM(CASE WHEN ParentDetailRowId_SO NOT IN (DetailRowId_SO, ParentBizDocId) THEN 1 ELSE 0 END) AS other,
+       COUNT(*) AS total
+FROM B20BOM WHERE CreatedAt >= '2026-09-22'
+```
+**Kết quả (SAU 78b36fc):** `matches_detail_row=17, matches_order_code=1, other=0, total=18` → tỷ lệ sai 1/18 ≈ 5.6%.
+
+Cùng query với `WHERE CreatedAt < '2026-09-22'` (TRƯỚC): `matches_detail_row=529, matches_order_code=49, other=0, total=644` → tỷ lệ sai 49/644 ≈ 7.6%.
+
+Tỷ lệ sai KHÔNG giảm về 0 sau `78b36fc` (7.6% → 5.6%, mẫu sau-vá nhỏ — 18 dòng — nên chưa chắc chắn về thống kê, nhưng dấu hiệu đủ rõ để nêu câu hỏi). Nghi ngờ còn 1 nhánh code khác chưa được `78b36fc` bao phủ (ví dụ luồng THDM, hoặc 1 loại sản phẩm cụ thể) — xem `Q-03` ở §5.
+
+### SQL-06 — Dấu vết import dở dang (K3)
+
+Cột liên kết `B20BOMDetail.BOMId → B20BOM.Id` (xác nhận theo mẫu query THDM có sẵn trong `bom_parser.py` — `_thdm_load_bom_qty_dict` JOIN `B20BOMDetail bd JOIN B20BOM bom ON bom.Id = bd.BOMId`).
+
+```sql
+SELECT COUNT(*) AS headers_with_zero_details FROM B20BOM h WHERE NOT EXISTS (SELECT 1 FROM B20BOMDetail d WHERE d.BOMId = h.Id)
+```
+**Kết quả:** `8`.
+
+```sql
+SELECT COUNT(*) AS total_headers FROM B20BOM
+```
+**Kết quả:** `662` (8/662 ≈ 1.2%).
+
+```sql
+SELECT TOP 8 h.Id, h.CreatedAt, h.BizDocId_SO FROM B20BOM h WHERE NOT EXISTS (SELECT 1 FROM B20BOMDetail d WHERE d.BOMId = h.Id) ORDER BY h.CreatedAt DESC
+```
+**Kết quả:** cả 8 dòng đều CŨ (2026-03-11 → 2026-06-29), không có dòng gần đây — **kết quả tích cực**, không có dấu hiệu import dở dang đang diễn ra. Chi tiết: `Id=345` (2026-06-29 20:50, đơn `21035622FO`) — cùng đơn hàng này có 4 header mồ côi (345,344,343,342, cùng `21035622FO`, gợi ý các lần import thử-lại-thất-bại lặp lại); `Id=285,284` (2026-06-19, đơn `21035472FO`); `Id=270` (2026-06-16, đơn `21035548FO`); `Id=22` (2026-03-11, đơn `11034336FO`). Đối chiếu với commit/rollback ở `main_window.py:10840-10870`/`9937-9957` (đọc ở read_first Task 3): các header mồ côi này nhất quán với 1 import bị lỗi giữa chừng SAU KHI insert header nhưng TRƯỚC KHI insert đủ detail, không có transaction bao trùm cả 2 bước.
+
+### SQL-07 — Mức dùng mã MKT thật (G3, G4, G5)
+
+```sql
+SELECT m.ItemTypeSX_Parent, COUNT(*) AS n
+FROM B20BOMDetail bd JOIN [BOMTool].[dbo].[vB20Item_MKT] m ON m.Id = bd.ItemId
+GROUP BY m.ItemTypeSX_Parent ORDER BY n DESC
+```
+**Kết quả (toàn bộ lịch sử, số dòng BOM chi tiết thật dùng mã MKT theo từng `ItemTypeSX_Parent`):** `I`=1373, `F`=652, `A`=265, `C`=254, `NULL`=72, `G`=67, `D`=50, `H`=48, `B`=21. Tổng = 2802 dòng.
+
+**Số liệu quyết định mức rủi ro của G1:** các nhóm `C` (254 dòng), `F` (652 dòng), `I` (1373 dòng) và `NULL` (72 dòng) **chính là 4 nhóm trùng khóa** phát hiện ở `SQL-01`. Tổng 254+652+1373+72 = **2351/2802 dòng (84%)** dùng MKT fallback đã đi qua 1 nhóm có collision không xác định thứ tự. Đây là bằng chứng định lượng cho Mức rủi ro = Cao của G1 (không phải rủi ro lý thuyết — là đa số lưu lượng MKT fallback thật). Chi tiết theo từng Id trong nhóm C và NULL đã có ở `SQL-01(d)`.
+
+### SQL-08 — Trùng tên B20Item (E8, E12)
+
+```sql
+SELECT COUNT(*) AS dup_name_groups, SUM(n) AS total_rows
+FROM (SELECT Name, COUNT(*) AS n FROM B20Item WHERE IsActive = 1 GROUP BY Name HAVING COUNT(*) > 1) x
+```
+**Kết quả:** `dup_name_groups = 7192`, `total_rows = 22519`.
+
+```sql
+SELECT TOP 10 Name, COUNT(*) AS n FROM B20Item WHERE IsActive = 1 GROUP BY Name HAVING COUNT(*) > 1 ORDER BY n DESC
+```
+**Kết quả (top 10):** "GÓI 1/1 SHOR DINING CHAIR"=278; "GÓI 1/1 Chip White Oak Dining Chair - Camp Olive"=166; "GÓI 1/4 MD1-TỦ DƯỚI"=138; "GÓI 1/2 Mặt bàn"=125; "GÓI 2/2 Khung chân"=125; "GÓI 1/1 Chip White Oak Dining Chair - Camp Stone"=116; "GÓI 1/1 Chip White Oak Barstool - Camp Navy"=81; "GÓI 1/1 Chip White Oak Dining Chair - Camp Salt"=80; "GÓI 1/1 Chip Walnut Dining Chair - Camp Navy"=74; "Chỉ khung bao ngang"=71.
+
+Đây là số trùng tên TOÀN DANH MỤC (population rộng — nhiều sản phẩm dùng chung tên linh kiện phổ thông như "Chỉ khung bao ngang"), khác quy mô với `SQL-02` (477 nhóm đã scope theo `item_code0` prefix — nhóm nhỏ hơn, đúng ngữ cảnh tái dùng mã BTP của 1 sản phẩm cụ thể). Không gộp 2 số liệu này làm một. Đây chính là population mà logic tie-break `1694b70` (§1) được viết ra để xử lý.
+
 ## 4. Bảng kiểm kê & verdict (D-05)
 
 ### 4.A Nhận diện sheet/section
@@ -425,6 +567,14 @@ Hiện tại code không có quy tắc ưu tiên tường minh — `Id` nào "th
 (c) phương án khác?
 
 Trả lời câu này quyết định nội dung cụ thể của ô "Cách sửa" cho G1 ở Phase 2.
+
+### Q-02
+
+**Bối cảnh (`SQL-04`, EmployeeId):** sau khi `9dc3c92` (v2.2.22) vá lỗi EmployeeId hard-code=1, dữ liệu thật SAU vá vẫn cho `EmployeeId=1` là giá trị phổ biến nhất (48/82 dòng có EmployeeId, so với dải Id nhân viên thật khác chỉ 1-10 dòng mỗi Id). **Câu hỏi:** `EmployeeId=1` sau vá có phải là 1 nhân viên thật (ví dụ tài khoản admin/hệ thống) hay vẫn là 1 nhánh fallback cũ chưa được `9dc3c92` bao phủ hết? Cần business hoặc DBA xác nhận Id=1 trong bảng nhân viên tương ứng là ai.
+
+### Q-03
+
+**Bối cảnh (`SQL-05`, ParentDetailRowId_SO):** sau khi `78b36fc` (v2.2.23) vá công thức ParentDetailRowId_SO, tỷ lệ dòng sai theo mẫu CŨ (bằng mã đơn hàng thay vì công thức Mục số) giảm từ 7.6% (644 dòng, trước vá) xuống 5.6% (18 dòng, sau vá) — KHÔNG về 0%. Mẫu sau-vá còn nhỏ (18 dòng) nên chưa chắc chắn về thống kê. **Câu hỏi:** có luồng import nào khác (THDM, hoặc 1 loại sản phẩm/section cụ thể) không đi qua đúng nhánh code mà `78b36fc` đã vá? Cần business xác nhận nguồn gốc của (các) dòng sai còn lại sau vá, hoặc executor cần thêm thời gian điều tra nếu Phase 2 quyết định port field này.
 
 ### Q-04
 
