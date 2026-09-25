@@ -9,9 +9,9 @@ Requirements cho đợt refactor BOM lần này. Mỗi mục map vào roadmap ph
 
 ### BA-Analysis
 
-- [ ] **BA-01**: Toàn bộ logic xử lý dữ liệu BOM hiện có trong `bom_parser.py` + phần liên quan trong `main_window.py` (BTP detection, Fill-Forward, MKT fallback, SP_HOOK, section/header detection) được liệt kê đầy đủ kèm bằng chứng hành vi thực tế (từ 94 file mẫu đã audit).
+- [x] **BA-01**: Toàn bộ logic xử lý dữ liệu BOM hiện có trong `bom_parser.py` + phần liên quan trong `main_window.py` (BTP detection, Fill-Forward, MKT fallback, SP_HOOK, section/header detection) được liệt kê đầy đủ kèm bằng chứng hành vi thực tế (từ 94 file mẫu đã audit).
 - [ ] **BA-02**: Mỗi logic có nhận định rõ ràng: GIỮ NGUYÊN / SỬA (kèm lý do + cách sửa) / BỎ (kèm lý do) — được người dùng (vai trò business owner) xác nhận trước khi viết code `core/` mới.
-- [ ] **BA-03**: Các quyết định BA được ghi lại thành tài liệu tham chiếu cho giai đoạn viết code (không để trôi mất qua hội thoại).
+- [x] **BA-03**: Các quyết định BA được ghi lại thành tài liệu tham chiếu cho giai đoạn viết code (không để trôi mất qua hội thoại).
 
 ### Core-Architecture
 
@@ -65,6 +65,7 @@ Ghi nhận nhưng chưa đưa vào roadmap lần này.
 | OBS-01, OBS-02 | Phase 2 | Pending |
 
 **Coverage:**
+
 - v1 requirements: 14 total
 - Mapped to phases: 14
 - Unmapped: 0 ✓

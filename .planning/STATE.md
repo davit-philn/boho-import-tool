@@ -4,16 +4,16 @@ milestone: v1.0
 milestone_name: milestone
 current_phase: 1
 current_phase_name: BA Analysis & Decision Lock
-status: planning
-stopped_at: Phase 1 context gathered
-last_updated: "2026-09-25T04:10:31.824Z"
+status: executing
+stopped_at: Completed 01-01-PLAN.md
+last_updated: "2026-09-25T06:35:11.213Z"
 last_activity: 2026-09-25
-last_activity_desc: Roadmap created, 14 v1 requirements mapped across 2 phases
+last_activity_desc: Phase 1 execution started
 progress:
   total_phases: 1
   completed_phases: 0
-  total_plans: 0
-  completed_plans: 0
+  total_plans: 3
+  completed_plans: 1
 ---
 
 # Project State
@@ -23,16 +23,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-09-25)
 
 **Core value:** Dữ liệu BOM import vào Bravo phải đúng và nhất quán — sai lệch gây hậu quả trực tiếp lên kế hoạch sản xuất và dữ liệu ERP thật.
-**Current focus:** Phase 1 - BA Analysis & Decision Lock
+**Current focus:** Phase 1 — BA Analysis & Decision Lock
 
 ## Current Position
 
-Phase: 1 of 2 (BA Analysis & Decision Lock)
-Plan: 0 of TBD in current phase
-Status: Ready to plan
-Last activity: 2026-09-25 — Roadmap created, 14 v1 requirements mapped across 2 phases
+Phase: 1 (BA Analysis & Decision Lock) — EXECUTING
+Plan: 2 of 3
+Status: Ready to execute
+Last activity: 2026-09-25 — Phase 1 execution started
 
-Progress: [░░░░░░░░░░] 0%
+Progress: [███░░░░░░░] 33%
 
 ## Performance Metrics
 
@@ -54,6 +54,11 @@ Progress: [░░░░░░░░░░] 0%
 - Trend: -
 
 *Updated after each plan completion*
+**Per-Plan Metrics:**
+
+| Plan | Duration | Tasks | Files |
+|------|----------|-------|-------|
+| Phase 01 P01 | 109min | 3 tasks | 1 files |
 
 ## Accumulated Context
 
@@ -65,6 +70,8 @@ Recent decisions affecting current work:
 - Pre-planning: Rebuild happens in parallel in `v3/`, `Tools/` production is never touched directly.
 - Pre-planning: Scope is BOM only — THDM and other flows stay untouched (deferred to v2 requirements).
 - Pre-planning: BA review (keep/fix/discard, confirmed by user) is a hard gate before any `core/` code is written — enforced by ordering Phase 1 before Phase 2.
+- [Phase ?]: mssql-boho MCP not exposed to executor subagent — coordinator ran §3 SQL queries in orchestrator session, results transcribed verbatim (documented in §0.3 of decision doc)
+- [Phase ?]: G1 (_mkt_cache dict-collision) verdict SỬA, driven by live SQL-01 data (4 real collision groups, nondeterministic winner); priority-rule fix deferred to business owner as Q-01
 
 ### Pending Todos
 
@@ -84,6 +91,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-09-25T04:10:31.808Z
-Stopped at: Phase 1 context gathered
-Resume file: .planning/phases/01-ba-analysis-decision-lock/01-CONTEXT.md
+Last session: 2026-09-25T06:35:11.192Z
+Stopped at: Completed 01-01-PLAN.md
+Resume file: None
