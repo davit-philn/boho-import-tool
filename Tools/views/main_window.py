@@ -10871,6 +10871,17 @@ class BOMToolApp(ctk.CTk):
                 conn.rollback()
             except Exception:
                 pass
+            import traceback as _tb
+            _tb_str = _tb.format_exc()
+            try:
+                _lp = os.path.join(os.path.dirname(sys.executable)
+                                   if getattr(sys, 'frozen', False)
+                                   else os.path.dirname(os.path.abspath(__file__)),
+                                   'import_crash.log')
+                with open(_lp, 'a', encoding='utf-8') as _lf:
+                    _lf.write(f"[{datetime.datetime.now():%Y-%m-%d %H:%M:%S}] fname={fname}\n{_tb_str}\n")
+            except Exception:
+                pass
             result = {'ok': False, 'error': str(e), 'fname': fname}
         finally:
             try:
