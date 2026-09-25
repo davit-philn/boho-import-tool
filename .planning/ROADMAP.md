@@ -28,12 +28,12 @@ Rebuild the BOM import logic for the BOHO Import Tool from a business-analysis-f
   3. The user, acting as business owner, has reviewed and confirmed all verdicts before any `core/` code is written.
   4. The confirmed verdicts are saved as a standalone reference document (not chat history) that Phase 2 can implement against.
 
-**Plans**: 1/3 plans executed
+**Plans**: 2/3 plans executed
 
 Plans:
 
 - [x] 01-01-PLAN.md — Evidence base + tracer row G1: doc skeleton, changelog 2.2.1→2.2.25 (D-04), 94-sample + mapping metrics (D-02), live read-only SQL via mssql-boho (D-03)
-- [ ] 01-02-PLAN.md — Full rule-level inventory (90+ rows, groups A-K) with evidence-backed GIỮ/SỬA/BỎ verdicts, §5 open questions, §6 Phase 2 mapping, integrity gate
+- [x] 01-02-PLAN.md — Full rule-level inventory (90+ rows, groups A-K) with evidence-backed GIỮ/SỬA/BỎ verdicts, §5 open questions, §6 Phase 2 mapping, integrity gate
 - [ ] 01-03-PLAN.md — Business-owner review checkpoint + sign-off; 01-BA-DECISIONS.md locked as CONFIRMED
 
 ### Phase 2: Core Rebuild — Architecture, Fixes & Observability
@@ -58,5 +58,5 @@ Phases execute in numeric order: 1 → 2
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. BA Analysis & Decision Lock | 1/3 | In Progress|  |
+| 1. BA Analysis & Decision Lock | 2/3 | In Progress|  |
 | 2. Core Rebuild — Architecture, Fixes & Observability | 0/TBD | Not started | - |

@@ -5,15 +5,15 @@ milestone_name: milestone
 current_phase: 1
 current_phase_name: BA Analysis & Decision Lock
 status: executing
-stopped_at: Completed 01-01-PLAN.md
-last_updated: "2026-09-25T06:35:11.213Z"
+stopped_at: Completed 01-02-PLAN.md
+last_updated: "2026-09-25T07:07:33.010Z"
 last_activity: 2026-09-25
 last_activity_desc: Phase 1 execution started
 progress:
   total_phases: 1
   completed_phases: 0
   total_plans: 3
-  completed_plans: 1
+  completed_plans: 2
 ---
 
 # Project State
@@ -28,11 +28,11 @@ See: .planning/PROJECT.md (updated 2026-09-25)
 ## Current Position
 
 Phase: 1 (BA Analysis & Decision Lock) — EXECUTING
-Plan: 2 of 3
+Plan: 3 of 3
 Status: Ready to execute
 Last activity: 2026-09-25 — Phase 1 execution started
 
-Progress: [███░░░░░░░] 33%
+Progress: [███████░░░] 67%
 
 ## Performance Metrics
 
@@ -59,6 +59,7 @@ Progress: [███░░░░░░░] 33%
 | Plan | Duration | Tasks | Files |
 |------|----------|-------|-------|
 | Phase 01 P01 | 109min | 3 tasks | 1 files |
+| Phase 01 P02 | 25min | 3 tasks | 1 files |
 
 ## Accumulated Context
 
@@ -72,6 +73,10 @@ Recent decisions affecting current work:
 - Pre-planning: BA review (keep/fix/discard, confirmed by user) is a hard gate before any `core/` code is written — enforced by ordering Phase 1 before Phase 2.
 - [Phase ?]: mssql-boho MCP not exposed to executor subagent — coordinator ran §3 SQL queries in orchestrator session, results transcribed verbatim (documented in §0.3 of decision doc)
 - [Phase ?]: G1 (_mkt_cache dict-collision) verdict SỬA, driven by live SQL-01 data (4 real collision groups, nondeterministic winner); priority-rule fix deferred to business owner as Q-01
+- [Phase ?]: 01-02: rewrote §4.C row-parse group against the real BOM function _parse_sheet after confirming the plan's cited _parse_section_excel_rows is THDM-only
+- [Phase ?]: 01-02: D2/D3 (_resolve_row_mapping Excel/Bien_doi branches) verdict BỎ — confirmed dead-for-BOM via exhaustive call-site grep, not inference
+- [Phase ?]: 01-02: corrected SQL-06's own evidentiary note — _run_insert_bg already wraps header+detail insert in one transaction; K3's real gap is ARCH-03 staging, not transaction wrapping
+- [Phase ?]: 01-02: BA-02 intentionally not marked complete — requires business-owner sign-off explicitly deferred to Plan 03
 
 ### Pending Todos
 
@@ -91,6 +96,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-09-25T06:35:11.192Z
-Stopped at: Completed 01-01-PLAN.md
+Last session: 2026-09-25T07:07:32.991Z
+Stopped at: Completed 01-02-PLAN.md
 Resume file: None
