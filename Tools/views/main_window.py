@@ -9844,7 +9844,7 @@ class BOMToolApp(ctk.CTk):
                         # bản chất placeholder) — lấy luôn, KHÔNG loại trừ "-"
                         # như fallback thông thường (loại trừ đó chỉ áp dụng
                         # cho item thật, không phù hợp với MKT).
-                        if section != 'BOM4' and 'Unit' in row_vals and not (row_vals.get('Unit') or '').strip():
+                        if section != 'BOM4' and 'Unit' in row_vals and not str(row_vals.get('Unit') or '').strip():
                             try:
                                 _cur_mu = conn.cursor()
                                 _cur_mu.execute(
