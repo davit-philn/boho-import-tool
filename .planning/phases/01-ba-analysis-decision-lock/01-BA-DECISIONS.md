@@ -677,6 +677,14 @@ Trả lời câu này quyết định nội dung cụ thể của ô "Cách sử
 
 Hệ quả cho Phase 2: (a) code vẫn nên thêm `ORDER BY` cho `G1` làm phòng vệ (defense-in-depth) cho các nhóm CHƯA được gộp (`F`, `I`, `NULL`) trong lúc chờ business dọn tiếp; (b) một khi nhóm `C` chỉ còn 1 mã, `G1`'s dict-collision cho nhóm này tự nhiên biến mất không cần logic ưu tiên; (c) việc tạo mã gộp + gán lại `ItemTypeSX_Parent` cho `vB20Item_MKT` là thao tác dữ liệu do business/admin tự làm trong Bravo, KHÔNG phải việc của Phase 2 code.
 
+**Cập nhật tiến độ dọn dữ liệu (kiểm tra live 2026-09-26):**
+
+- **Nhóm F — ĐÃ XONG, sạch.** `MKT_KEO` (Id 424819) đã được business vô hiệu hóa (`IsActive=0`), giữ lại đúng 1 mã active `MKT_VTP`. Không còn trùng khóa.
+- **Nhóm C — ĐANG DỞ, tạm THỜI TRÙNG NẶNG HƠN.** Business đã tạo `MKT_VAIDASIMILI` (Id `428581`, tạo 2026-09-25 08:44, cha = `NVL04` "Vải / Da / Simili" — nhóm NGOÀI) nhưng CHƯA vô hiệu hóa 3 mã cũ `MKT_SIMILI`/`MKT_VAI`/`MKT_DA` (đều vẫn `IsActive=1`, là con của `NVL04-001/002/003` — nhóm CHI TIẾT bên trong `NVL04`). Kết quả: nhóm `C` hiện có **4 mã active cùng lúc** (trùng khóa nặng hơn lúc audit ban đầu, vốn chỉ có 3).
+- **Giới hạn cấu trúc phát hiện thêm:** view `vB20Item_MKT` và code `_mkt_cache` (`ItemTypeSX_Parent`) **không phân biệt được mã ở tầng "nhóm ngoài" (vd `NVL04`) với mã ở tầng "nhóm chi tiết bên trong"** (vd `NVL04-001` Vải) — cả hai tầng đều gộp chung vào đúng 1 `ItemTypeSX_Parent='C'`. Do đó tạo thêm mã ở tầng ngoài KHÔNG tự động giải quyết trùng khóa; phải tắt (`IsActive=0`) toàn bộ mã tầng chi tiết trùng thì nhóm mới thực sự về còn 1 mã, đúng cách đã áp dụng thành công cho nhóm `F`.
+- **Phương án "sửa lại view để tự phân biệt tầng" — đã cân nhắc, KHÔNG thực hiện ở Phase 1:** về lý thuyết có thể sửa `vB20Item_MKT` để ưu tiên mã tầng ngoài khi có mã tầng trong cùng loại, nhưng: (1) kết nối `mssql-boho` hiện dùng bị khóa DDL (`allowDDL=false`), Claude không có quyền chạy `ALTER VIEW`; (2) sửa định nghĩa view là thay đổi phạm vi rộng — ảnh hưởng MỌI nơi khác trong Bravo đang query `vB20Item_MKT`, không chỉ tool BOM, cần DBA/quản trị Bravo rà soát trước; (3) Phase 1 chỉ thu thập bằng chứng, chưa phải lúc sửa schema. **Ghi nhận làm hướng cân nhắc cho Phase 2** (song song với cách hiện tại: business tự tắt `IsActive` từng mã tầng chi tiết trùng) — chưa quyết định thực hiện, cần bàn thêm với DBA nếu muốn theo hướng sửa view.
+
+
 ### Q-02
 
 **Bối cảnh (`SQL-04`, EmployeeId):** sau khi `9dc3c92` (v2.2.22) vá lỗi EmployeeId hard-code=1, dữ liệu thật SAU vá vẫn cho `EmployeeId=1` là giá trị phổ biến nhất (48/82 dòng có EmployeeId, so với dải Id nhân viên thật khác chỉ 1-10 dòng mỗi Id). **Câu hỏi:** `EmployeeId=1` sau vá có phải là 1 nhân viên thật (ví dụ tài khoản admin/hệ thống) hay vẫn là 1 nhánh fallback cũ chưa được `9dc3c92` bao phủ hết? Cần business hoặc DBA xác nhận Id=1 trong bảng nhân viên tương ứng là ai.
