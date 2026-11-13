@@ -17,7 +17,7 @@ import subprocess
 from typing import Callable, Optional
 
 # ── Constants ────────────────────────────────────────────────────────────────
-CURRENT_VERSION = "2.3.0"   # auto-updated by build.py
+CURRENT_VERSION = "2.3.1"   # auto-updated by build.py
 
 VERSION_URL = (
     "https://raw.githubusercontent.com/davit-philn/"
@@ -131,11 +131,115 @@ def download_update(
     return zip_path
 
 
+# Script cập nhật chạy trong PowerShell: hiện cửa sổ tiến trình trên taskbar (bấm vào để xem),
+# đợi app tắt → giải nén → ghi đè file → mở lại app. Các __TOKEN__ được thay bằng đường dẫn thật.
+_PS1_TEMPLATE = r"""Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+[System.Windows.Forms.Application]::EnableVisualStyles()
+
+$sync = [hashtable]::Synchronized(@{ Status = 'Đang chờ ứng dụng đóng...'; Done = $false; Ok = $true; Error = '' })
+
+# Cửa sổ tiến trình — hiện trên taskbar, bấm vào để xem đang chạy
+$form = New-Object System.Windows.Forms.Form
+$form.Text            = 'BOHO IMPORT - Đang cập nhật'
+$form.ClientSize      = New-Object System.Drawing.Size(420, 110)
+$form.StartPosition   = 'CenterScreen'
+$form.FormBorderStyle = 'FixedDialog'
+$form.MaximizeBox     = $false
+$form.ShowInTaskbar   = $true
+$form.TopMost         = $true
+$form.Font            = New-Object System.Drawing.Font('Segoe UI', 10)
+
+$lbl = New-Object System.Windows.Forms.Label
+$lbl.Location = New-Object System.Drawing.Point(20, 20)
+$lbl.Size     = New-Object System.Drawing.Size(380, 24)
+$lbl.Text     = $sync.Status
+$form.Controls.Add($lbl)
+
+$bar = New-Object System.Windows.Forms.ProgressBar
+$bar.Location = New-Object System.Drawing.Point(20, 56)
+$bar.Size     = New-Object System.Drawing.Size(380, 22)
+$bar.Style    = 'Marquee'
+$bar.MarqueeAnimationSpeed = 30
+$form.Controls.Add($bar)
+
+# Không cho đóng khi đang cập nhật (thu nhỏ xuống taskbar vẫn được)
+$form.Add_FormClosing({ if (-not $sync.Done) { $_.Cancel = $true } })
+
+$work = {
+    param($sync, $zipPath, $extractTmp, $appDir, $appExe, $dbCfgBak)
+    $errLog = Join-Path $env:TEMP 'boho_update_error.log'
+    try {
+        $name = [System.IO.Path]::GetFileNameWithoutExtension($appExe)
+        $waited = 0
+        while ((Get-Process -Name $name -ErrorAction SilentlyContinue) -and $waited -lt 15) {
+            Start-Sleep -Seconds 1
+            $waited++
+        }
+        Start-Sleep -Seconds 1
+
+        $dbCfgSrc = Join-Path $appDir 'config\db_config.json'
+        if (Test-Path $dbCfgSrc) { Copy-Item $dbCfgSrc $dbCfgBak -Force }
+
+        $sync.Status = 'Đang giải nén bản mới...'
+        if (Test-Path $extractTmp) { Remove-Item $extractTmp -Recurse -Force }
+        Expand-Archive -Path $zipPath -DestinationPath $extractTmp -Force
+
+        $sync.Status = 'Đang ghi đè file...'
+        $inner = Get-ChildItem $extractTmp -Directory | Select-Object -First 1
+        if ($inner) {
+            Copy-Item (Join-Path $inner.FullName '*') $appDir -Recurse -Force -ErrorAction Stop
+        }
+
+        if (Test-Path $dbCfgBak) {
+            Copy-Item $dbCfgBak $dbCfgSrc -Force
+            Remove-Item $dbCfgBak -Force
+        }
+        Remove-Item $extractTmp -Recurse -Force -ErrorAction SilentlyContinue
+        Remove-Item $zipPath -Force -ErrorAction SilentlyContinue
+        $sync.Status = 'Hoàn tất — đang mở lại ứng dụng...'
+    } catch {
+        $sync.Ok = $false
+        $sync.Error = $_.ToString()
+        Add-Content $errLog ("Update failed: " + $_.ToString())
+    }
+    $sync.Done = $true
+}
+
+$ps = [PowerShell]::Create()
+$null = $ps.AddScript($work).AddArgument($sync).AddArgument('__ZIP__').AddArgument('__EXTRACT__').AddArgument('__APPDIR__').AddArgument('__APPEXE__').AddArgument('__DBBAK__')
+$handle = $ps.BeginInvoke()
+
+$form.Show()
+while (-not $sync.Done) {
+    $lbl.Text = $sync.Status
+    [System.Windows.Forms.Application]::DoEvents()
+    Start-Sleep -Milliseconds 80
+}
+$lbl.Text = $sync.Status
+$bar.Style = 'Continuous'
+$bar.Value = 100
+
+if ($sync.Ok) {
+    $until = (Get-Date).AddMilliseconds(1200)
+    while ((Get-Date) -lt $until) { [System.Windows.Forms.Application]::DoEvents(); Start-Sleep -Milliseconds 50 }
+    Start-Process '__APPEXE__'
+} else {
+    $form.TopMost = $false
+    [System.Windows.Forms.MessageBox]::Show("Cập nhật thất bại: " + $sync.Error + "`nXem log: " + (Join-Path $env:TEMP 'boho_update_error.log'), 'BOHO IMPORT', 'OK', 'Error') | Out-Null
+}
+$form.Close()
+$ps.Dispose()
+Remove-Item $MyInvocation.MyCommand.Path -Force -ErrorAction SilentlyContinue
+"""
+
+
 def apply_update(zip_path: str):
     """
     Ghi PowerShell updater script → launch ngầm → sys.exit().
     Script PS1:
-      - Chờ app tắt (2s)
+      - Hiện cửa sổ tiến trình trên taskbar
+      - Chờ app tắt
       - Backup db_config.json (giữ credentials)
       - Extract ZIP vào temp
       - xcopy nội dung vào app dir (đè file cũ)
@@ -159,89 +263,12 @@ def apply_update(zip_path: str):
     extract_tmp = os.path.join(tempfile.gettempdir(), "boho_update_extract")
     db_cfg_bak  = os.path.join(tempfile.gettempdir(), "boho_db_config.bak")
 
-    ps1 = f"""
-Add-Type -AssemblyName System.Windows.Forms
+    ps1 = _PS1_TEMPLATE
+    for key, val in (("__ZIP__", zip_path), ("__EXTRACT__", extract_tmp), ("__APPDIR__", app_dir),
+                     ("__APPEXE__", app_exe), ("__DBBAK__", db_cfg_bak)):
+        ps1 = ps1.replace(key, _ps(val))
 
-# Tray icon thông báo "Đang cập nhật..."
-$notify = New-Object System.Windows.Forms.NotifyIcon
-$notify.Icon = [System.Drawing.SystemIcons]::Information
-$notify.Visible = $true
-$notify.BalloonTipTitle = 'BOHO IMPORT - Dang cap nhat'
-$notify.BalloonTipText  = 'Dang ap dung ban moi, vui long doi...'
-$notify.ShowBalloonTip(15000)
-
-# Chờ process tắt hẳn (tối đa 15s) trước khi copy đè EXE
-$processName = [System.IO.Path]::GetFileNameWithoutExtension('{_ps(app_exe)}')
-$waited = 0
-while ((Get-Process -Name $processName -ErrorAction SilentlyContinue) -and $waited -lt 15) {{
-    Start-Sleep -Seconds 1
-    $waited++
-}}
-Start-Sleep -Seconds 1
-
-$zipPath    = '{_ps(zip_path)}'
-$extractTmp = '{_ps(extract_tmp)}'
-$appDir     = '{_ps(app_dir)}'
-$appExe     = '{_ps(app_exe)}'
-$dbCfgSrc   = Join-Path $appDir 'config\\db_config.json'
-$dbCfgBak   = '{_ps(db_cfg_bak)}'
-
-# Backup db_config.json (credentials user)
-if (Test-Path $dbCfgSrc) {{
-    Copy-Item $dbCfgSrc $dbCfgBak -Force
-}}
-
-# Extract ZIP
-if (Test-Path $extractTmp) {{ Remove-Item $extractTmp -Recurse -Force }}
-try {{
-    Expand-Archive -Path $zipPath -DestinationPath $extractTmp -Force
-}} catch {{
-    Add-Content '$env:TEMP\\boho_update_error.log' "Extract failed: $_"
-    $notify.Dispose()
-    exit 1
-}}
-
-# Copy nội dung subfolder đầu tiên → app dir
-$inner = Get-ChildItem $extractTmp -Directory | Select-Object -First 1
-if ($inner) {{
-    try {{
-        Copy-Item (Join-Path $inner.FullName '*') $appDir -Recurse -Force -ErrorAction Stop
-    }} catch {{
-        Add-Content "$env:TEMP\boho_update_error.log" "Copy failed: $_ | src=$($inner.FullName) dst=$appDir"
-        $notify.BalloonTipTitle = 'BOHO IMPORT - Cap nhat that bai'
-        $notify.BalloonTipText  = "Khong the ghi de file. Xem log: $env:TEMP\boho_update_error.log"
-        $notify.ShowBalloonTip(8000)
-        Start-Sleep -Seconds 3
-        $notify.Dispose()
-        exit 1
-    }}
-}}
-
-# Phục hồi db_config.json
-if (Test-Path $dbCfgBak) {{
-    Copy-Item $dbCfgBak $dbCfgSrc -Force
-    Remove-Item $dbCfgBak -Force
-}}
-
-# Dọn temp
-Remove-Item $extractTmp -Recurse -Force -ErrorAction SilentlyContinue
-Remove-Item $zipPath    -Force          -ErrorAction SilentlyContinue
-
-# Thông báo hoàn tất
-$notify.BalloonTipTitle = 'BOHO IMPORT - Cap nhat xong!'
-$notify.BalloonTipText  = 'Dang khoi dong lai ung dung...'
-$notify.ShowBalloonTip(4000)
-Start-Sleep -Seconds 1
-$notify.Dispose()
-
-# Relaunch app
-Start-Process $appExe
-
-# Xóa script này
-Remove-Item $MyInvocation.MyCommand.Path -Force -ErrorAction SilentlyContinue
-"""
-
-    with open(ps1_path, "w", encoding="utf-8") as f:
+    with open(ps1_path, "w", encoding="utf-8-sig") as f:
         f.write(ps1)
 
     subprocess.Popen(

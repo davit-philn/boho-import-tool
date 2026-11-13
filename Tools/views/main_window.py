@@ -208,7 +208,6 @@ class BOMToolApp(ctk.CTk):
         self._update_info = info
         ver   = info.get("version", "?")
         url   = info.get("download_url", "")
-        notes = info.get("release_notes", "") or "Cập nhật để tiếp tục dùng."
 
         is_dark = ctk.get_appearance_mode() == "Dark"
         bg  = "#1E1E1E" if is_dark else "#F5F5F5"
@@ -224,15 +223,11 @@ class BOMToolApp(ctk.CTk):
         dlg.protocol("WM_DELETE_WINDOW", lambda: None)   # Không cho đóng
         dlg.configure(bg=bg)
 
-        self._center_dialog(dlg, 440, 310)
-        dlg.lift()
-        dlg.focus_force()
-
         tk.Label(dlg, text="🔔", font=("Segoe UI", 36), bg=bg, fg=fg).pack(pady=(28, 4))
         tk.Label(dlg, text=f"Có bản mới  v{ver}",
                  font=("Segoe UI", 13, "bold"), bg=bg, fg=fg).pack()
-        tk.Label(dlg, text=notes, font=("Segoe UI", 11),
-                 bg=bg, fg=fg2, wraplength=380, justify="center").pack(pady=(6, 14))
+        tk.Label(dlg, text="Cập nhật để tiếp tục sử dụng.", font=("Segoe UI", 11),
+                 bg=bg, fg=fg2).pack(pady=(6, 14))
 
         lbl_status = tk.Label(dlg, text="", font=("Segoe UI", 11), bg=bg, fg="#4FC3F7")
         lbl_status.pack()
@@ -242,7 +237,12 @@ class BOMToolApp(ctk.CTk):
 
         btn = CButton(dlg, text="⬇  Cập nhật ngay", width=200, height=38,
                       font=ctk_font(*FONT_LABEL), corner_radius=8)
-        btn.pack()
+        btn.pack(pady=(0, 24))
+
+        # Căn giữa sau khi đã có đủ nội dung → cao theo nội dung, nút luôn hiện
+        self._center_dialog(dlg, 440)
+        dlg.lift()
+        dlg.focus_force()
 
         def _start():
             if not url:
