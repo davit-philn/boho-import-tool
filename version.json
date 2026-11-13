@@ -2,5 +2,5 @@
     "version": "2.3.0",
     "release_date": "2026-11-13",
     "download_url": "https://github.com/davit-philn/boho-import-tool/releases/download/v2.3.0/BOHO_IMPORT_BOM_THDM_v2.3.0_Portable.zip",
-    "release_notes": "Luong 3 buoc: tu kiem tra khi nap file -> chon nhan vien + don hang -> Import; sua du lieu phai Kiem tra lai. Rule moi: Dvt bat buoc; BTP = Dvt CUM; BB -> IsBB=1; bang quy doi nhom NHOM_QUY_DOI. Don hang lay tu view vB30BizDocSO_ExploreFO (ban moi nhat). Danh sach loi bam vao nhay toi o loi, nut reset, popup can giua, font dong nhat."
+    "release_notes": "Cai tien luong import BOM va giao dien."
 }
