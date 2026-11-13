@@ -221,21 +221,23 @@ def _find_header_row(rows):
 def _norm_col(s):
     return re.sub(r"[\s\n]+", "_", str(s).strip()).rstrip("_") if s else ""
 
-def _build_headers(r1, r2):
+def _build_headers(r1, r2, strict=False):
     """Gộp 2 dòng header (merged cell) thành tên cột duy nhất.
     Forward-fill r1 để xử lý merged cell: khi r1[i]=None nhưng r2[i] có giá trị,
     nghĩa là ô r1 bị merge → kế thừa giá trị parent từ cột trước.
+    strict=True: chỉ kế thừa khi ô nhóm (anchor) thật sự có tiêu đề con bên dưới. Ô như 'SLg'
+    (merge dọc, không có tiêu đề con) KHÔNG phải nhóm nên không gán cho cột 'Tên Vật Tư' kế bên.
     """
     n = max(len(r1), len(r2))
     r1_f = list(r1) + [None] * max(0, n - len(r1))
     r2_f = list(r2) + [None] * max(0, n - len(r2)) if r2 else [None] * n
 
     # Forward-fill r1 cho merged cells: r1[i]=None nhưng r2[i] có giá trị
-    last_r1 = None
+    last_r1, last_has_sub = None, False
     for i in range(n):
         if r1_f[i] is not None:
-            last_r1 = r1_f[i]
-        elif r2_f[i] is not None and last_r1 is not None:
+            last_r1, last_has_sub = r1_f[i], r2_f[i] is not None
+        elif r2_f[i] is not None and last_r1 is not None and (last_has_sub or not strict):
             r1_f[i] = last_r1
 
     headers = []
@@ -256,6 +258,25 @@ def _build_headers(r1, r2):
             seen[h] = 0
             result.append(h)
     return result
+
+def _header_group_map(r1, r2, headers, strict=False):
+    """{tên cột → (nhóm, tên riêng)} cho các cột có cả 2 dòng header (nhóm merge ngang,
+    vd 'Qui Cách Tinh Chế' + 'DÀY (mm)'). Cùng quy tắc forward-fill với _build_headers.
+    Chỉ phục vụ hiển thị — không ảnh hưởng tên cột/dữ liệu."""
+    n = len(headers)
+    r1_f = list(r1) + [None] * max(0, n - len(r1))
+    r2_f = list(r2) + [None] * max(0, n - len(r2))
+    last_r1, last_has_sub, out = None, False, {}
+    for i in range(n):
+        if r1_f[i] is not None:
+            last_r1, last_has_sub = r1_f[i], r2_f[i] is not None
+        elif r2_f[i] is not None and last_r1 is not None and (last_has_sub or not strict):
+            r1_f[i] = last_r1
+        v1 = _norm_col(r1_f[i]) if r1_f[i] is not None else ""
+        v2 = _norm_col(r2_f[i]) if r2_f[i] is not None else ""
+        if v1 and v2:
+            out[headers[i]] = (v1.replace("_", " "), v2.replace("_", " "))
+    return out
 
 def _is_data_row(rd, key_cols):
     """True nếu dòng có ít nhất 1 giá trị thực trong các cột key."""
@@ -501,7 +522,7 @@ def _parse_sheet(ws, sheet_name, live_meta_rows=None, meta_keys=None, cell_specs
         for c in (r2[4:] if r2 else []))
 
     if has_sub:
-        headers    = _build_headers(r1, r2)
+        headers    = _build_headers(r1, r2, strict=True)
         data_start = hidx + 2
     else:
         headers    = [_norm_col(c) if c else f"COL_{i}" for i, c in enumerate(r1)]
@@ -581,9 +602,13 @@ def _parse_sheet(ws, sheet_name, live_meta_rows=None, meta_keys=None, cell_specs
 
     df = pd.DataFrame(rows_out, columns=headers) if rows_out else pd.DataFrame(columns=headers)
 
-    # Bỏ cột toàn None hoặc tên COL_
-    drop = [c for c in df.columns if c.startswith("COL_") or df[c].isna().all()]
+    # Bỏ cột không có tiêu đề (COL_). Cột CÓ tiêu đề mà trống hoàn toàn vẫn giữ — vd cột công thức
+    # (Đvt…) trong file chưa được Excel tính lại: bỏ đi thì báo "thiếu cột" và không thấy cột để sửa.
+    drop = [c for c in df.columns if c.startswith("COL_")]
     df   = df.drop(columns=drop, errors="ignore")
+    if has_sub:   # nhóm header merge → UI hiện nhóm ở dòng trên, tên riêng ở dòng dưới
+        _hg = _header_group_map(r1, r2, headers, strict=True)
+        df.attrs["header_groups"] = {c: _hg[c] for c in df.columns if c in _hg}
 
     return {"sheet_name": sheet_name, "sheet_type": stype, "metadata": meta, "df": df}
 
@@ -597,6 +622,7 @@ def _ask_excel_password(filename):
 
     result = [None]
     dialog = tk.Toplevel()
+    dialog.attributes("-alpha", 0.0)   # ẩn tới khi đặt xong vị trí
     dialog.title("File được bảo vệ bằng mật khẩu")
     dialog.resizable(False, False)
     dialog.grab_set()
@@ -605,27 +631,36 @@ def _ask_excel_password(filename):
     # Center dialog
     dialog.update_idletasks()
     w, h = 400, 180
-    x = (dialog.winfo_screenwidth()  - w) // 2
-    y = (dialog.winfo_screenheight() - h) // 2
-    dialog.geometry(f"{w}x{h}+{x}+{y}")
+    root = tk._default_root   # cửa sổ chính của app (nếu đang hiện) → căn giữa trên đó
+    try:
+        if root is not None and root.winfo_viewable() and root.state() != "iconic":
+            x = root.winfo_rootx() + (root.winfo_width() - w) // 2
+            y = root.winfo_rooty() + (root.winfo_height() - h) // 2
+        else:
+            raise ValueError
+    except Exception:
+        x = (dialog.winfo_screenwidth()  - w) // 2
+        y = (dialog.winfo_screenheight() - h) // 2
+    dialog.geometry(f"{w}x{h}+{max(0, x)}+{max(0, y)}")
+    dialog.attributes("-alpha", 1.0)
     dialog.configure(bg=dt["bg_main"])
 
     tk.Label(dialog, text="🔒  File Excel có mật khẩu",
-             font=("Segoe UI", 11, "bold"),
+             font=("Segoe UI", 13, "bold"),
              bg=dt["bg_main"], fg=dt["text_main"]).pack(pady=(16, 2))
     tk.Label(dialog, text=os.path.basename(filename),
-             font=("Segoe UI", 9), bg=dt["bg_main"], fg=dt["text_muted"]).pack()
+             font=("Segoe UI", 11), bg=dt["bg_main"], fg=dt["text_muted"]).pack()
     tk.Label(dialog, text="Nhập mật khẩu để mở file:",
-             font=("Segoe UI", 9), bg=dt["bg_main"], fg=dt["text_muted"]).pack(pady=(10, 4))
+             font=("Segoe UI", 11), bg=dt["bg_main"], fg=dt["text_muted"]).pack(pady=(10, 4))
 
-    entry = tk.Entry(dialog, show="*", font=("Segoe UI", 10),
+    entry = tk.Entry(dialog, show="*", font=("Segoe UI", 12),
                      bg=dt["dlg_input_bg"], fg=dt["text_main"],
                      insertbackground=dt["text_main"],
                      relief="flat", width=32)
     entry.pack(ipady=5)
     entry.focus_set()
 
-    err_lbl = tk.Label(dialog, text="", font=("Segoe UI", 8),
+    err_lbl = tk.Label(dialog, text="", font=("Segoe UI", 11),
                        bg=dt["bg_main"], fg=dt["log_err"])
     err_lbl.pack()
 
@@ -799,11 +834,11 @@ def parse_bom_file(filepath, meta_keys=None, cell_specs=None, _decrypted_bytes=N
 
     # Bảng H: Header
     if global_meta:
-        tables["[H] Phiếu Header"] = {
+        tables["[H] Đầu phiếu"] = {
             "df": pd.DataFrame([global_meta]), "type": "HEADER", "warnings": []}
     else:
         w = "Không tìm thấy thông tin đầu phiếu (Dự án, Đơn hàng...)"
-        tables["[H] Phiếu Header"] = {
+        tables["[H] Đầu phiếu"] = {
             "df": pd.DataFrame([{"Lỗi": w}]), "type": "HEADER", "warnings": [w]}
         warnings.append(w)
 

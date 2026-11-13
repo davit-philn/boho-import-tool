@@ -157,6 +157,14 @@ def load_mapping(mapping_path=MAPPING_FILE):
             if r.get('validatorname')
         ]
 
+        # 6) NHOM_QUY_DOI — nhóm vật tư (tên nhóm → loại chuẩn + mã tạm MKT)
+        GRP_COLS = ['Section', 'Ten_Nhom', 'Chu_Nhom', 'Loai_Chuan',
+                    'Ma_Tam', 'Cach_Xu_Ly', 'Ghi_chu']
+        result['NHOM_QUY_DOI'] = [
+            r for r in _load_config_rows(xl, 'NHOM_QUY_DOI', GRP_COLS)
+            if r.get('section') and r.get('ten_nhom')
+        ]
+
     except Exception as e:
         print(f"[Mapping] Lỗi đọc file mapping: {e}")
     return result

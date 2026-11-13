@@ -15,7 +15,7 @@ APP_VERSION = "2.2.25"
 # khi đổi TAB_THDM sang "Tổng hợp định mức" thì chuỗi không còn chứa "THDM"
 # nữa nên auto-reload khi switch tab bị vô hiệu âm thầm — đổi tên tab từ giờ
 # chỉ cần sửa đúng 1 dòng dưới đây.
-TAB_IMPORT  = "📥  Import BOM"
+TAB_IMPORT  = "📥  BOM"
 TAB_THDM    = "📊  Tổng hợp định mức"
 TAB_CATALOG = "🌳  Danh mục vật tư"
 
@@ -81,6 +81,8 @@ def guess_col_align(col_name: str) -> str:
                ''.join(c for c in _nfkd if not unicodedata.combining(c)))
     if not n:
         return 'center'
+    if n.startswith('ten') or 'tenvattu' in n:   # Tên chi tiết / Tên vật tư… luôn căn trái
+        return 'w'
 
     # ── PHẢI: số lượng / kích thước / giá tiền ──────────────────────────────
     _R_EXACT = {
@@ -177,6 +179,7 @@ THEMES = {
         "sheet_table_bg":   "#1E1E1E",
         "sheet_table_fg":   "#E8E8E8",
         "sheet_grid":       "#888888",
+        "band_line":        "#AEB8CC",
         "sheet_index_bg":   "#252526",
         "sheet_index_fg":   "#E8E8E8",
         # Treeview
@@ -208,6 +211,13 @@ THEMES = {
         "badge_err_fg":     "#FF8F8F",
         "badge_warn_bg":    "#3B2E1C",
         "badge_warn_fg":    "#FFD180",
+        # ô cụ thể bị lỗi/cảnh báo (nổi hơn tô cả dòng)
+        "group_row_bg":     "#1F3A5F",
+        "group_row_fg":     "#BFDBFE",
+        "cell_err_bg":      "#B91C1C",
+        "cell_err_fg":      "#FFFFFF",
+        "cell_warn_bg":     "#B45309",
+        "cell_warn_fg":     "#FFFFFF",
         # tksheet scrollbar
         "scroll_track":       "#252526",
         "scroll_thumb":       "#3E3E42",
@@ -229,32 +239,33 @@ THEMES = {
     },
     "Light": {
         # App backgrounds
-        "bg_main":          "#F8FAFC",
-        "bg_card":          "#FFFFFF",
-        "bg_panel":         "#F1F5F9",
-        "border":           "#E2E8F0",
+        "bg_main":          "#E9EDF2",
+        "bg_card":          "#F1F4F8",
+        "bg_panel":         "#E2E7EE",
+        "border":           "#CBD3DE",
         "text_main":        "#0F172A",
         "text_muted":       "#64748B",
         "accent":           "#0066CC",
         # tksheet
-        "sheet_header_bg":  "#E2E8F0",
+        "sheet_header_bg":  "#D5DCE6",
         "sheet_header_fg":  "#0F172A",
-        "sheet_table_bg":   "#FFFFFF",
+        "sheet_table_bg":   "#F1F4F8",
         "sheet_table_fg":   "#0F172A",
-        "sheet_grid":       "#CBD5E1",
-        "sheet_index_bg":   "#F1F5F9",
+        "sheet_grid":       "#C3CCD8",
+        "band_line":        "#7C8DA8",
+        "sheet_index_bg":   "#E2E7EE",
         "sheet_index_fg":   "#0F172A",
         # Treeview
         "tv_text":          "#1E293B",
         "tv_sel":           "#BFDBFE",
-        "tv_sep":           "#CBD5E1",
-        "tv_heading_bg":    "#E2E8F0",
+        "tv_sep":           "#C3CCD8",
+        "tv_heading_bg":    "#D5DCE6",
         "tv_heading_fg":    "#0F172A",
         "tv_heading_act":   "#D1D5DB",
         # SearchCombo popup
-        "popup_bg":         "#FFFFFF",
+        "popup_bg":         "#F1F4F8",
         "popup_border":     "#CBD5E1",
-        "popup_entry_bg":   "#F8FAFC",
+        "popup_entry_bg":   "#E9EDF2",
         "sel_bg":           "#0066CC",
         # Catalog tree tag fg
         "cat_leaf":         "#1E293B",
@@ -273,15 +284,22 @@ THEMES = {
         "badge_err_fg":     "#DC2626",
         "badge_warn_bg":    "#FEF3C7",
         "badge_warn_fg":    "#D97706",
+        # ô cụ thể bị lỗi/cảnh báo (nổi hơn tô cả dòng)
+        "group_row_bg":     "#D6E4F7",
+        "group_row_fg":     "#1E3A8A",
+        "cell_err_bg":      "#F87171",
+        "cell_err_fg":      "#450A0A",
+        "cell_warn_bg":     "#FCD34D",
+        "cell_warn_fg":     "#451A03",
         # tksheet scrollbar
-        "scroll_track":       "#F1F5F9",
+        "scroll_track":       "#E2E7EE",
         "scroll_thumb":       "#CBD5E1",
         "scroll_thumb_active":"#94A3B8",
         # Deep bg / overlay
-        "bg_deep":            "#E2E8F0",
-        "overlay_bg":         "#F0F4F8",
+        "bg_deep":            "#D5DCE6",
+        "overlay_bg":         "#E5E9EF",
         # Dialog inputs & buttons
-        "dlg_input_bg":       "#F1F5F9",
+        "dlg_input_bg":       "#E6EAF0",
         "btn_primary":        "#2563EB",
         "btn_primary_hover":  "#1D4ED8",
         "btn_sec_hover":      "#D1D5DB",
@@ -320,18 +338,31 @@ C = {
 }
 
 # ── Typography constants ──────────────────────────────────────────────────────
-FONT_BODY    = ("Segoe UI", 11, "normal")
-FONT_BODY_B  = ("Segoe UI", 11, "bold")
-FONT_SMALL   = ("Segoe UI", 10, "normal")
-FONT_SMALL_B = ("Segoe UI", 10, "bold")
-FONT_SMALL_I = ("Segoe UI", 10, "italic")
-FONT_MD      = ("Segoe UI", 12, "normal")
-FONT_MD_B    = ("Segoe UI", 12, "bold")
+# Thang chữ thống nhất — tính bằng POINT: tk.Label/Listbox/Treeview/tksheet dùng trực tiếp (tự co giãn
+# theo DPI màn hình); CTk dùng qua ctk_font() (đổi sang pixel). Trước đây CTk hiểu số là pixel còn tk
+# hiểu là point nên cùng "11" mà mỗi nơi một cỡ, và chữ tk không to theo DPI.
+# Chú thích 11 · Thân 12 · Tiêu đề phụ 13 · Tiêu đề 17 · Biểu tượng lớn 36.
+FONT_BODY    = ("Segoe UI", 12, "normal")
+FONT_BODY_B  = ("Segoe UI", 12, "bold")
+FONT_SMALL   = ("Segoe UI", 11, "normal")
+FONT_SMALL_B = ("Segoe UI", 11, "bold")
+FONT_SMALL_I = ("Segoe UI", 11, "italic")
+FONT_MD      = FONT_BODY      # giữ tên cũ, cùng cấp Thân
+FONT_MD_B    = FONT_BODY_B
 FONT_LABEL   = ("Segoe UI", 13, "bold")
 FONT_LABEL_N = ("Segoe UI", 13, "normal")
-FONT_TITLE   = ("Segoe UI", 18, "bold")
-FONT_HERO    = ("Segoe UI", 48, "normal")
-FONT_ICON    = ("Segoe UI", 42, "bold")
+FONT_TITLE   = ("Segoe UI", 17, "bold")
+FONT_HERO    = ("Segoe UI", 36, "normal")
+FONT_ICON    = ("Segoe UI", 36, "bold")
+
+
+def ctk_font(family=None, size=None, weight=None, **kw):
+    """CTkFont từ cùng bộ FONT_* (point): đổi sang pixel mà CTk yêu cầu (1pt = 4/3 px)."""
+    import customtkinter as ctk
+    px = round(abs(size) * 96 / 72) if size is not None else None
+    if weight == "italic":   # FONT_SMALL_I: CTk dùng slant chứ không phải weight
+        weight, kw["slant"] = None, "italic"
+    return ctk.CTkFont(family, px, weight, **kw)
 
 # ── Spacing tokens ────────────────────────────────────────────────────────────
 PAD_XS = 4     # tight inline (icon-to-label)

@@ -10,7 +10,7 @@ try:
 except ImportError:
     _HAS_TKSHEET = False
 
-from services.utils import guess_col_align, THEMES
+from services.utils import guess_col_align, THEMES, ctk_font, FONT_BODY, FONT_SMALL
 
 # ── Compat wrappers: business logic gọi .config(fg=, bg=) như tkinter thường ─
 class CLabel(ctk.CTkLabel):
@@ -30,6 +30,34 @@ class CButton(ctk.CTkButton):
             elif k in ("bg", "background"): mp["fg_color"]   = v
             else:                           mp[k]            = v
         super().configure(**mp)
+
+
+class CPrimaryButton(CButton):
+    """Nút hành động chính: xanh khi bật, xám rõ ràng khi khóa (CTk không có
+    fg_color riêng cho state disabled nên tự đổi màu theo state)."""
+
+    _ON  = dict(fg_color=("#0066CC", "#0066CC"), hover_color=("#0055AA", "#0055AA"),
+                text_color="#FFFFFF")
+    _OFF = dict(fg_color=("#CBD3DE", "#2F3541"), hover_color=("#CBD3DE", "#2F3541"),
+                text_color_disabled=("#7B8794", "#6B7280"))
+
+    def __init__(self, master, **kw):
+        state = kw.pop("state", "normal")
+        super().__init__(master, **kw)
+        self.configure(state=state)
+
+    def configure(self, require_redraw=False, **kw):
+        if "state" in kw:
+            kw = {**(self._ON if kw["state"] == "normal" else self._OFF), **kw}
+        super().configure(require_redraw=require_redraw, **kw)
+
+    def config(self, **kw):
+        mp = {}
+        for k, v in kw.items():
+            if k in ("fg", "foreground"):   mp["text_color"] = v
+            elif k in ("bg", "background"): mp["fg_color"]   = v
+            else:                           mp[k]            = v
+        self.configure(**mp)
 
 
 # ── SearchCombo: Entry + popup Listbox có ô tìm kiếm (kiểu BRAVO) ─────────────
@@ -56,7 +84,7 @@ class _SearchCombo(ctk.CTkFrame):
         self._width      = width
         self._height     = height
         self._popup_width = popup_width  # None = auto (max widget_width, 480)
-        self._font       = font or ctk.CTkFont("Segoe UI", 11)
+        self._font       = font or ctk_font(*FONT_BODY)
         self._command    = command
         self._placeholder = placeholder
         self._all_values: list[str] = list(values or [])
@@ -72,9 +100,9 @@ class _SearchCombo(ctk.CTkFrame):
             font=self._font, height=height,
             corner_radius=6, width=width - 30,
             state="readonly" if state == "normal" else "disabled",
-            fg_color=("#FFFFFF", "#2D2D30"),
+            fg_color=("#EEF1F6", "#2D2D30"),
             text_color=("#0F172A", "#E8E8E8"),
-            border_color=("#E2E8F0", "#444444"))
+            border_color=("#C3CCD8", "#444444"))
         self._entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
         self._entry.bind("<Button-1>", self._toggle_popup)
 
@@ -82,10 +110,10 @@ class _SearchCombo(ctk.CTkFrame):
         self._btn = ctk.CTkButton(
             self, text="▾", width=28, height=height,
             corner_radius=6,
-            fg_color=("#F1F5F9", "#2D2D30"),
-            hover_color=("#E2E8F0", "#3C3C3C"),
+            fg_color=("#E2E7EE", "#2D2D30"),
+            hover_color=("#D5DCE6", "#3C3C3C"),
             text_color=("#64748B", "#AAAAAA"),
-            font=ctk.CTkFont("Segoe UI", 10),
+            font=ctk_font(*FONT_SMALL),
             command=self._toggle_popup,
             state=state)
         self._btn.pack(side=tk.LEFT)
@@ -140,7 +168,7 @@ class _SearchCombo(ctk.CTkFrame):
 
     def set_error(self, flag: bool):
         """Tô đỏ / bỏ đỏ border entry để báo trường bắt buộc chưa chọn."""
-        color = ("#EF4444", "#DC2626") if flag else ("#E2E8F0", "#444444")
+        color = ("#EF4444", "#DC2626") if flag else ("#C3CCD8", "#444444")
         self._entry.configure(border_color=color)
 
     # ── Popup ─────────────────────────────────────────────────────────────────
@@ -314,7 +342,7 @@ class Tooltip:
         self._tip.wm_geometry(f"+{x}+{y}")
         tk.Label(self._tip, text=text,
                  bg=dt["bg_card"], fg="#9CDCFE",
-                 font=("Segoe UI", 12),
+                 font=("Segoe UI", 11),
                  relief="flat", padx=10, pady=5,
                  wraplength=700, justify="left").pack()
 
@@ -346,12 +374,12 @@ class SheetTable:
             theme=_sheet_theme,
             show_row_index=False,
             show_top_left=False,
-            row_height=30,
-            header_height=34,
+            row_height=32,
+            header_height=36,
             show_horizontal_grid=True,
             show_vertical_grid=True,
-            font=("Segoe UI", 10, "normal"),
-            header_font=("Segoe UI", 10, "bold"),
+            font=("Segoe UI", 12, "normal"),   # tksheet chỉ nhận point dương — cùng cấp Thân
+            header_font=("Segoe UI", 12, "bold"),
         )
         self.sheet.enable_bindings(
             "single_select", "drag_select", "column_select", "row_select",
@@ -370,6 +398,8 @@ class SheetTable:
                 index_bg=dt["sheet_index_bg"],
                 index_fg=dt["sheet_index_fg"],
                 top_left_bg=dt["sheet_header_bg"],
+                table_editor_bg=dt["sheet_table_bg"],
+                table_editor_fg=dt["sheet_table_fg"],
                 show_horizontal_grid=True,
                 show_vertical_grid=True,
                 table_grid_fg=dt["sheet_grid"],
@@ -411,9 +441,19 @@ class SheetTable:
         self._rows      = []     # thứ tự iid
         self._data      = {}     # iid → list[str]
         self._row_tags  = {}     # iid → tag đầu tiên
+        self._cell_marks = {}    # (row, col) → tag — tô riêng từng ô (vd ô lỗi)
+        self._visible_n  = None  # số cột hiển thị (cắt cột đuôi); None = hết
+        self._wrap       = False # xuống dòng ở tiêu đề + ô, co chiều cao dòng theo nội dung
+        self._band        = None  # canvas dải tiêu đề nhóm (enable_group_band)
+        self._band_groups = []
+        self._band_sig    = None
+        self._theme       = dt
+        self._row_labels  = []    # nhãn cố định bên trái (không trôi khi cuộn ngang); [] = ẩn
+        self._row_label_w = 210
+        self._index_marks = {}    # row → tag: tô ô nhãn (vd dòng có lỗi)
         self._center_tag  = None   # tag của các dòng cần căn giữa
         self._italic_tag  = None   # tag của các dòng cần italic (canvas post-render)
-        self._italic_font = ("Segoe UI", 9, "italic")
+        self._italic_font = ("Segoe UI", 11, "italic")
         self._italic_bound = False # đã bind Expose chưa
         self._hidden_cols  = []  # data-index (0-based) cột ẩn — áp sau set_sheet_data
         self._next_iid  = 0
@@ -425,7 +465,7 @@ class SheetTable:
         self._center_tag = tag
         self._schedule()
 
-    def italic_rows_by_tag(self, tag, font=("Segoe UI", 9, "italic")):
+    def italic_rows_by_tag(self, tag, font=("Segoe UI", 11, "italic")):
         """Đặt italic cho các dòng mang tag này bằng cách patch canvas sau render."""
         self._italic_tag  = tag
         self._italic_font = font
@@ -460,7 +500,95 @@ class SheetTable:
             pass
 
     # ── Geometry manager / event delegation ──────────────────────────────────
-    def grid(self, **kw):        self.sheet.grid(**kw)
+    def grid(self, **kw):
+        if self._band is None:
+            self.sheet.grid(**kw)
+            return
+        r = kw.get("row", 0)   # dải nhóm nằm ngay trên bảng, bảng xuống 1 hàng
+        self._band.grid(row=r, column=kw.get("column", 0), sticky="ew")
+        self.sheet.grid(**dict(kw, row=r + 1))
+        if not self._band_groups:
+            self._band.grid_remove()
+
+    # ── Dải tiêu đề nhóm (giống ô header merge ngang trong Excel) ────────────
+    # tksheet chỉ có 1 hàng tiêu đề, không gộp ô được → vẽ canvas riêng phía trên,
+    # mỗi nhóm trải đúng qua các cột con và bám theo cuộn ngang/kéo rộng cột.
+    _BAND_H = 28
+
+    def enable_group_band(self):
+        self._band = tk.Canvas(self.sheet.master, height=self._BAND_H,
+                               highlightthickness=0, bd=0)
+        self._poll_band()
+
+    def set_group_spans(self, spans):
+        """spans: [(cột_đầu, cột_cuối, nhãn)] theo chỉ số cột hiển thị. Rỗng → ẩn dải."""
+        if self._band is None:
+            return
+        self._band_groups = list(spans)
+        if self._band_groups:
+            self._band.grid()
+        else:
+            self._band.grid_remove()
+        self._band_sig = None
+        self._schedule()
+
+    def _poll_band(self):
+        """Vẽ lại dải khi vị trí cột/cuộn ngang đổi (kéo rộng cột, cuộn, đổi bảng, theme)."""
+        try:
+            if self._band_groups and self._band.winfo_ismapped():
+                mt = self.sheet.MT
+                n = max(e for _, e, _ in self._band_groups) + 2
+                sig = (tuple(mt.col_positions[:n]), round(mt.canvasx(0)),
+                       self._band.winfo_width(), id(self._theme), self._index_px())
+                if sig != self._band_sig:
+                    self._band_sig = sig
+                    self._redraw_band()
+            self._band.after(30, self._poll_band)
+        except tk.TclError:
+            pass   # widget đã bị hủy
+
+    def _redraw_band(self):
+        import tkinter.font as tkfont
+        c, t = self._band, self._theme
+        line = t.get("band_line", t["sheet_grid"])
+        c.delete("all")
+        c.configure(bg=t["sheet_header_bg"], height=self._BAND_H)
+        pos = self.sheet.MT.col_positions
+        idx_w = self._index_px()            # cột nhãn cố định chiếm chỗ bên trái
+        x_off = self.sheet.MT.canvasx(0) - idx_w
+        width = c.winfo_width()
+        font = tkfont.Font(family="Segoe UI", size=12, weight="bold")
+        covered = {i for s, e, _ in self._band_groups for i in range(s, e + 1)}
+        for i in range(len(pos) - 1):
+            if i in covered:
+                continue
+            # Cột không thuộc nhóm nào: nối liền với ô tiêu đề bên dưới (như ô merge dọc trong Excel)
+            x0, x1 = pos[i] - x_off, pos[i + 1] - x_off
+            if x1 < idx_w or x0 > width:
+                continue
+            c.create_rectangle(x0, 0, x1, self._BAND_H + 1, fill=t["sheet_header_bg"], outline="")
+            for lx, ly0, ly1 in ((x0, 0, self._BAND_H + 1), (x1, 0, self._BAND_H + 1)):
+                c.create_line(lx, ly0, lx, ly1, fill=line)
+            c.create_line(x0, 0, x1, 0, fill=line)
+        for s, e, label in self._band_groups:
+            if e + 1 >= len(pos):
+                continue
+            x0, x1 = pos[s] - x_off, pos[e + 1] - x_off
+            if x1 < idx_w or x0 > width:
+                continue
+            c.create_rectangle(x0, 0, x1, self._BAND_H, fill=t["sheet_header_bg"],
+                               outline=line)
+            c.create_line(x0, self._BAND_H - 1, x1, self._BAND_H - 1, fill=line, width=2)
+            vis0, vis1 = max(x0, idx_w), min(x1, width)
+            room = vis1 - vis0 - 10
+            text = label
+            while len(text) > 1 and font.measure(text) > room:
+                text = text.rstrip("…")[:-1].rstrip() + "…"
+            c.create_text((vis0 + vis1) / 2, self._BAND_H / 2, text=text,
+                          fill=t["sheet_header_fg"], font=font)
+        if idx_w:   # che phần dải nằm trên cột nhãn cố định (các ô nhóm trượt bên dưới nó)
+            c.create_rectangle(0, 0, idx_w, self._BAND_H + 1, fill=t["sheet_header_bg"], outline="")
+            c.create_line(idx_w, 0, idx_w, self._BAND_H + 1, fill=line)
     def pack(self, **kw):        self.sheet.pack(**kw)
     def place(self, **kw):       self.sheet.place(**kw)
     def bind(self, *a, **k):     self.sheet.MT.bind(*a, **k)
@@ -477,10 +605,21 @@ class SheetTable:
     def __setitem__(self, key, value):
         if key == "columns":
             self._columns    = [str(c) for c in value]
+            self._visible_n  = None
             self._headings   = {c: c for c in self._columns}
             self._col_widths = {}
             self._col_aligns = {}
             self._auto_align_all()
+            self._schedule()
+        elif key == "displaycolumns":
+            # Giống Treeview: "#all" hiện hết, ngược lại chỉ hiện các cột trong danh sách.
+            # Chỉ hỗ trợ ẩn các cột ĐUÔI (danh sách = tiền tố của columns): cắt hẳn khỏi sheet
+            # nên chỉ số cột hiển thị vẫn trùng chỉ số dữ liệu, tránh trạng thái ẩn cột của tksheet.
+            self._visible_n = None
+            if value != "#all":
+                keep = {str(c) for c in value}
+                if 0 < len(keep) < len(self._columns) and keep == set(self._columns[:len(keep)]):
+                    self._visible_n = len(keep)
             self._schedule()
 
     def __getitem__(self, key):
@@ -601,6 +740,8 @@ class SheetTable:
         self._rows     = []
         self._data     = {}
         self._row_tags = {}
+        self._cell_marks = {}
+        self._row_labels, self._index_marks = [], {}
         self._next_iid = 0
         for row in data:
             iid = f"r{self._next_iid}"
@@ -615,6 +756,108 @@ class SheetTable:
             self._row_tags[self._rows[idx]] = tag
             self._schedule()
 
+    def enable_wrap(self):
+        """Tiêu đề và ô dài tự xuống dòng; chiều cao dòng/tiêu đề co theo nội dung."""
+        self._wrap = True
+        try:
+            self.sheet.set_options(table_wrap="w", header_wrap="w",
+                                   max_row_height=54, max_header_height=90)
+        except Exception:
+            pass
+        self._style_dirty = True
+        self._schedule()
+
+    @staticmethod
+    def _wrap_line_count(text, font, width):
+        """Số dòng khi xuống dòng theo từ trong ô rộng `width` px."""
+        total, space = 0, font.measure(" ")
+        for para in str(text).split("\n"):
+            lines, cur = 1, 0
+            for word in para.split():
+                w = font.measure(word)
+                if cur and cur + space + w > width:
+                    lines += 1
+                    cur = w
+                else:
+                    cur = cur + space + w if cur else w
+            total += lines
+        return total
+
+    def _fit_wrapped_sizes(self):
+        import tkinter.font as tkfont
+        try:
+            if len(self._rows) <= 1500:
+                self.sheet.set_all_row_heights(redraw=False)
+            hfont = tkfont.Font(family="Segoe UI", size=12, weight="bold")
+            n = 1
+            for col in self._columns[:self._visible_n]:
+                w = max(self._col_widths.get(col, 100) - 16, 20)
+                n = max(n, self._wrap_line_count(self._headings.get(col, col), hfont, w))
+            self.sheet.set_header_height_pixels(n * 22 + 10, redraw=False)
+        except Exception:
+            pass
+
+    def set_row_labels(self, labels, width=210):
+        """Cột nhãn cố định bên trái (vd 'STT  Tên chi tiết') — không trôi khi cuộn ngang nên luôn
+        biết đang xem dòng nào. labels: 1 chuỗi cho mỗi dòng của bảng; rỗng → ẩn cột nhãn."""
+        self._row_labels  = ["" if v is None else str(v) for v in labels]
+        self._row_label_w = width
+        self._index_marks = {}
+        self._schedule()
+
+    def mark_index(self, row: int, tag: str):
+        """Tô ô nhãn của dòng `row` theo tag (vd dòng có lỗi)."""
+        self._index_marks[row] = tag
+        self._schedule()
+
+    def _apply_row_labels(self):
+        try:
+            if not self._row_labels:
+                self.sheet.hide("row_index")
+                self.sheet.hide("top_left")
+                return
+            self.sheet.set_options(auto_resize_row_index=False, index_wrap="w",
+                                   index_font=("Segoe UI", 12, "normal"))
+            self.sheet.row_index(newindex=list(self._row_labels), redraw=False)
+            self.sheet.show("row_index")
+            self.sheet.show("top_left")     # ô góc trên-trái: không có thì lộ nền đen
+            self.sheet.set_index_width(self._row_label_w, redraw=False)
+            self.sheet.index_align("w", redraw=False)
+            for r, tg in self._index_marks.items():
+                cfg = self._tags.get(tg) or {}
+                if cfg.get("bg") or cfg.get("fg"):
+                    self.sheet.highlight_cells(row=r, canvas="index", bg=cfg.get("bg"),
+                                               fg=cfg.get("fg"), redraw=False)
+        except Exception:
+            pass
+
+    def _index_px(self):
+        """Bề rộng hiện tại của cột nhãn cố định (0 nếu đang ẩn)."""
+        try:
+            ri = self.sheet.RI
+            return ri.winfo_width() if ri.winfo_ismapped() else 0
+        except Exception:
+            return 0
+
+    def mark_cell(self, row: int, col: int, tag: str):
+        """Tô riêng ô (row, col) theo tag đã tag_configure. Áp ở lần vẽ lại kế tiếp."""
+        self._cell_marks[(row, col)] = tag
+        self._schedule()
+
+    def clear_cell_marks(self):
+        self._cell_marks = {}
+
+    def _apply_cell_marks(self):
+        for (r, c), tg in self._cell_marks.items():
+            cfg = self._tags.get(tg)
+            if not cfg or not (cfg.get("bg") or cfg.get("fg")):
+                continue
+            try:
+                self.sheet.highlight_cells(row=r, column=c, bg=cfg.get("bg"),
+                                           fg=cfg.get("fg"), redraw=False)
+            except Exception:
+                pass
+
     def hide_columns_by_index(self, cols: list):
         """Ẩn các cột theo data-index (0-based). Áp trong _flush() sau set_sheet_data."""
         self._hidden_cols = list(cols)
@@ -625,10 +868,10 @@ class SheetTable:
         Bao gồm cả header và mọi dòng data. Gọi sau load()."""
         try:
             import tkinter.font as tkfont
-            _hfont = tkfont.Font(family="Segoe UI", size=10, weight="bold")
-            _dfont = tkfont.Font(family="Segoe UI", size=10)
+            _hfont = tkfont.Font(family="Segoe UI", size=12, weight="bold")
+            _dfont = tkfont.Font(family="Segoe UI", size=12)
             PAD = 24
-            for ci, col in enumerate(self._columns):
+            for ci, col in enumerate(self._columns[:self._visible_n]):
                 # Đo header
                 w = _hfont.measure(self._headings.get(col, col)) + PAD
                 # Đo tất cả các ô trong cột
@@ -654,7 +897,7 @@ class SheetTable:
         if not self._pending:
             return
         self._pending = False
-        ncols = len(self._columns)
+        ncols = self._visible_n if self._visible_n is not None else len(self._columns)
         data  = []
         for iid in self._rows:
             vals = self._data[iid]
@@ -669,7 +912,7 @@ class SheetTable:
         # So thêm với total_columns() thực tế: bảng được gán cột lúc CHƯA có
         # dữ liệu (VD: tab "Đã xử lý") thì sheet đang có 0 cột dù
         # _applied_cols đã đúng — vẫn phải reset.
-        cols_changed = self._applied_cols != self._columns
+        cols_changed = self._applied_cols != self._columns[:ncols]
         try:
             if self.sheet.total_columns() != ncols:
                 cols_changed = True
@@ -683,7 +926,7 @@ class SheetTable:
             self.sheet.set_sheet_data(data)
         try:
             self.sheet.headers([self._headings.get(c, c)
-                                for c in self._columns])
+                                for c in self._columns[:ncols]])
         except Exception:
             pass
         # Lưới an toàn: set_sheet_data/headers đôi khi không co hết cột khi
@@ -715,7 +958,7 @@ class SheetTable:
                         pass
             self._style_dirty = False
         # Header luôn căn giữa, áp mỗi flush để chắc không bị reset
-        _n = len(self._columns)
+        _n = ncols
         if _n > 0:
             try:
                 self.sheet.align_header(
@@ -723,7 +966,7 @@ class SheetTable:
                 )
             except Exception:
                 pass
-        self._applied_cols = list(self._columns)
+        self._applied_cols = list(self._columns[:ncols])
         try:
             self.sheet.dehighlight_all()
         except Exception:
@@ -742,6 +985,8 @@ class SheetTable:
                                           fg=cfg.get("fg"), redraw=False)
             except Exception:
                 pass
+        self._apply_cell_marks()
+        self._apply_row_labels()
         # Căn giữa các dòng mang center-tag (vd hàng phụ SQL_Column) — ghi đè
         # căn lề cột, không đụng các dòng dữ liệu khác
         if self._center_tag is not None:
@@ -752,6 +997,8 @@ class SheetTable:
                     self.sheet.align_rows(rows=c_idx, align='center', redraw=False)
                 except Exception:
                     pass
+        if self._wrap and self._rows:
+            self._fit_wrapped_sizes()
         # Dòng sub-header (tag "sql_names"): readonly + nhỏ hơn + italic
         _sub_hdr = [i for i, iid in enumerate(self._rows)
                     if self._row_tags.get(iid) == "sql_names"]
@@ -772,7 +1019,7 @@ class SheetTable:
             # Italic font — bỏ qua nếu phiên bản tksheet không hỗ trợ font param
             try:
                 self.sheet.highlight_rows(
-                    rows=_sub_hdr, font=("Segoe UI", 9, "italic"), redraw=False)
+                    rows=_sub_hdr, font=("Segoe UI", 11, "italic"), redraw=False)
             except (TypeError, AttributeError, Exception):
                 pass
         try:
@@ -790,6 +1037,7 @@ class SheetTable:
 
     def apply_theme(self, t: dict):
         """Cập nhật màu sắc tksheet theo palette theme t (Dark/Light)."""
+        self._theme = t
         _st  = t.get("scroll_track",        "#252526")
         _sfg = t.get("scroll_thumb",        "#3E3E42")
         _sac = t.get("scroll_thumb_active", "#606066")
@@ -802,6 +1050,8 @@ class SheetTable:
                 index_bg=t["sheet_index_bg"],
                 index_fg=t["sheet_index_fg"],
                 top_left_bg=t["sheet_header_bg"],
+                table_editor_bg=t["sheet_table_bg"],
+                table_editor_fg=t["sheet_table_fg"],
                 show_horizontal_grid=True,
                 show_vertical_grid=True,
                 table_grid_fg=t["sheet_grid"],
@@ -852,6 +1102,7 @@ class SheetTable:
                                               bg=cfg.get("bg"),
                                               fg=cfg.get("fg"),
                                               redraw=False)
+            self._apply_cell_marks()
             self.sheet.redraw()
         except Exception:
             pass

@@ -36,6 +36,7 @@ from services.utils import (
     guess_col_align, resource_path,
     FONT_BODY, FONT_BODY_B, FONT_SMALL, FONT_SMALL_B, FONT_SMALL_I,
     FONT_MD, FONT_MD_B, FONT_LABEL, FONT_LABEL_N, FONT_TITLE, FONT_HERO, FONT_ICON,
+    ctk_font,
     PAD_XS, PAD_SM, PAD_MD, PAD_LG,
 )
 from services.mapping_loader import (
@@ -58,6 +59,10 @@ from services.bom_parser import (
     _resolve_formula, _is_data_row,
     _is_encrypted_excel, _decrypt_excel, _ask_excel_password,
 )
+from services.bom_rules import (
+    sp_expects_code, find_missing_sp_codes, row_is_btp, row_is_bb, find_col)
+from services.bom_groups import (
+    build_group_table, resolve_group, is_roman_stt, is_group_stt, HOW_MKT)
 from services.validators import (
     validate_layer1, count_errors,
     REQUIRED_HEADER_FIELDS, NUMERIC_RE,
@@ -67,7 +72,7 @@ try:
 except Exception:
     _updater = None
 from views.widgets import (
-    CLabel, CButton, _SearchCombo, Tooltip, SheetTable,
+    CLabel, CButton, CPrimaryButton, _SearchCombo, Tooltip, SheetTable,
 )
 
 # Mã B20Item dạng chuẩn (vd NVL10-000003) — dùng để tie-break khi 1 tên trùng
@@ -79,7 +84,7 @@ class BOMToolApp(ctk.CTk):
     def __init__(self):
         super().__init__()
         self.withdraw()  # An ngay - tranh flash den khi khoi dong
-        self.title(f"BOHO IMPORT BOM/THDM v{APP_VERSION}")
+        self.title(f"BOHO IMPORT BOM v{APP_VERSION}")
         self.geometry("1360x820")
         # Set app icon
         try:
@@ -98,6 +103,8 @@ class BOMToolApp(ctk.CTk):
         self._bom_selected_order_id  = None  # BizDocId đã chọn
         self._bom_selected_product_id = None  # ProductId suy ra từ Đơn hàng (B30BizDocSO.ProductId)
         self._bom_layer2_done        = False  # True sau khi Layer 2 prescan hoàn thành tại Kiểm tra
+        self._bom_dirty              = False  # True khi sửa dữ liệu trên lưới sau Kiểm tra → bắt buộc Kiểm tra lại
+        self._bom_prescan_running    = False
         self._batch_files  = []
         self._loading_dlg  = None
         self._last_import_bom_id = None   # BOM Id của lần import gần nhất (cho Hoàn tác)
@@ -201,7 +208,7 @@ class BOMToolApp(ctk.CTk):
         self._update_info = info
         ver   = info.get("version", "?")
         url   = info.get("download_url", "")
-        notes = info.get("release_notes", "") or "Vui lòng cập nhật để tiếp tục sử dụng."
+        notes = info.get("release_notes", "") or "Cập nhật để tiếp tục dùng."
 
         is_dark = ctk.get_appearance_mode() == "Dark"
         bg  = "#1E1E1E" if is_dark else "#F5F5F5"
@@ -209,6 +216,7 @@ class BOMToolApp(ctk.CTk):
         fg2 = "#8A8A8A" if is_dark else "#666666"
 
         dlg = tk.Toplevel(self)
+        dlg.attributes("-alpha", 0.0)
         dlg.title("")
         dlg.resizable(False, False)
         dlg.transient(self)
@@ -216,42 +224,38 @@ class BOMToolApp(ctk.CTk):
         dlg.protocol("WM_DELETE_WINDOW", lambda: None)   # Không cho đóng
         dlg.configure(bg=bg)
 
-        W, H = 440, 310
-        dlg.update_idletasks()
-        sw = self.winfo_screenwidth()
-        sh = self.winfo_screenheight()
-        dlg.geometry(f"{W}x{H}+{(sw - W)//2}+{(sh - H)//2}")
+        self._center_dialog(dlg, 440, 310)
         dlg.lift()
         dlg.focus_force()
 
         tk.Label(dlg, text="🔔", font=("Segoe UI", 36), bg=bg, fg=fg).pack(pady=(28, 4))
-        tk.Label(dlg, text=f"Có phiên bản mới  v{ver}",
-                 font=("Segoe UI", 14, "bold"), bg=bg, fg=fg).pack()
-        tk.Label(dlg, text=notes, font=("Segoe UI", 10),
+        tk.Label(dlg, text=f"Có bản mới  v{ver}",
+                 font=("Segoe UI", 13, "bold"), bg=bg, fg=fg).pack()
+        tk.Label(dlg, text=notes, font=("Segoe UI", 11),
                  bg=bg, fg=fg2, wraplength=380, justify="center").pack(pady=(6, 14))
 
-        lbl_status = tk.Label(dlg, text="", font=("Segoe UI", 10), bg=bg, fg="#4FC3F7")
+        lbl_status = tk.Label(dlg, text="", font=("Segoe UI", 11), bg=bg, fg="#4FC3F7")
         lbl_status.pack()
 
         pbar = ttk.Progressbar(dlg, length=360, mode="determinate", maximum=100)
         pbar.pack(pady=(4, 18))
 
         btn = CButton(dlg, text="⬇  Cập nhật ngay", width=200, height=38,
-                      font=ctk.CTkFont("Segoe UI", 13, "bold"), corner_radius=8)
+                      font=ctk_font(*FONT_LABEL), corner_radius=8)
         btn.pack()
 
         def _start():
             if not url:
                 lbl_status.configure(text="Không tìm thấy link tải. Liên hệ quản trị.")
                 return
-            btn.configure(state="disabled", text="⏳  Đang tải...")
+            btn.configure(state="disabled", text="⏳  Đang tải…")
 
             def _progress(dl, total):
                 if total > 0:
                     pct = int(dl * 100 / total)
                     def _upd(p=pct):
                         pbar.configure(value=p)
-                        lbl_status.configure(text=f"Đang tải...  {p}%")
+                        lbl_status.configure(text=f"Đang tải…  {p}%")
                     dlg.after(0, _upd)
 
             def _worker():
@@ -261,16 +265,16 @@ class BOMToolApp(ctk.CTk):
                 except Exception as e:
                     _err_txt = f"{type(e).__name__}: {e}"[:200]
                     dlg.after(0, lambda: (
-                        btn.configure(state="normal", text="❌  Tải thất bại — Thử lại"),
-                        lbl_status.configure(text=f"Lỗi khi tải: {_err_txt}"),
+                        btn.configure(state="normal", text="❌  Thử lại"),
+                        lbl_status.configure(text=f"Tải lỗi: {_err_txt}"),
                     ))
 
             threading.Thread(target=_worker, daemon=True).start()
 
         def _apply(zip_path):
             pbar.configure(value=100)
-            lbl_status.configure(text="Đang áp dụng bản cập nhật — ứng dụng sẽ tự khởi động lại...")
-            btn.configure(state="disabled", text="⏳  Đang áp dụng...")
+            lbl_status.configure(text="Đang cập nhật — ứng dụng sẽ tự mở lại…")
+            btn.configure(state="disabled", text="⏳  Đang cập nhật…")
             dlg.after(800, lambda: _updater.apply_update(zip_path))
 
         btn.configure(command=_start)
@@ -411,6 +415,10 @@ class BOMToolApp(ctk.CTk):
             obj.tag_configure("sql_names",
                 background=t.get("field_row_bg"),
                 foreground=t.get("field_row_fg"))
+            # Phải đặt trước rehighlight() bên dưới — nếu không dòng chẵn/lẻ
+            # vẫn giữ nền của theme cũ (Light hiện dòng đen chữ mờ).
+            obj.tag_configure("oddrow",  background=t["bg_main"])
+            obj.tag_configure("evenrow", background=t["bg_panel"])
             obj.tag_configure("row_normal", foreground=t.get("row_normal_fg"))
             obj.tag_configure("row_alt",    foreground=t.get("row_alt_fg"))
             obj.tag_configure("err_row",
@@ -419,6 +427,12 @@ class BOMToolApp(ctk.CTk):
             obj.tag_configure("warn_row",
                 background=t.get("badge_warn_bg"),
                 foreground=t.get("badge_warn_fg"))
+            obj.tag_configure("group_row",
+                background=t.get("group_row_bg"), foreground=t.get("group_row_fg"))
+            obj.tag_configure("err_cell",
+                background=t.get("cell_err_bg"), foreground=t.get("cell_err_fg"))
+            obj.tag_configure("warn_cell",
+                background=t.get("cell_warn_bg"), foreground=t.get("cell_warn_fg"))
             obj.rehighlight()
 
         for _attr in ("tree", "map_tree", "log_tree", "thdm_raw_tree", "_thdm_header_tree",
@@ -504,6 +518,13 @@ class BOMToolApp(ctk.CTk):
             "#fff5f5": "#251515" if not _is_light else "#FFF5F5",
             "#fecaca": "#7B1A1A" if not _is_light else "#FECACA",
         }
+        # Các màu nền phụ khác của cả 2 theme → màu tương ứng của theme mới.
+        # setdefault: không ghi đè các ánh xạ chính ở trên khi 2 key trùng màu.
+        for _k in ("bg_deep", "overlay_bg", "dlg_input_bg", "sheet_table_bg",
+                   "sheet_index_bg", "sheet_header_bg", "popup_bg", "popup_entry_bg"):
+            for _pal in (_D, _L):
+                if _k in _pal and _k in t:
+                    _color_map.setdefault(str(_pal[_k]).lower(), t[_k])
         # fg_map: đổi màu chữ tk.Label theo theme (neutral colors, không đụng semantic)
         _fg_map = {
             "#8a8a8a": t["text_muted"],   # C["muted"] dark
@@ -572,11 +593,7 @@ class BOMToolApp(ctk.CTk):
         except Exception:
             pass
 
-        # Cập nhật evenrow BOM treeview + empty-state labels theo theme
-        try:
-            self.tree.tag_configure("evenrow", background=t["bg_panel"])
-        except Exception:
-            pass
+        # Empty-state labels theo theme
         _bg = t["sheet_table_bg"]
         _fg = t["text_muted"]
         for _lbl in ("_empty_lbl_icon", "_empty_lbl_main", "_empty_lbl_hint"):
@@ -586,11 +603,13 @@ class BOMToolApp(ctk.CTk):
                     _w.configure(bg=_bg, fg=_fg)
                 except Exception:
                     pass
-        if getattr(self, "_empty_frame", None):
-            try:
-                self._empty_frame.configure(bg=_bg)
-            except Exception:
-                pass
+        for _fr in ("_empty_frame", "_empty_inner"):
+            _w = getattr(self, _fr, None)
+            if _w:
+                try:
+                    _w.configure(bg=_bg)
+                except Exception:
+                    pass
 
         # Catalog import empty state
         for _lbl in ("_cat_import_empty_lbl_icon", "_cat_import_empty_lbl_main",
@@ -614,8 +633,69 @@ class BOMToolApp(ctk.CTk):
         # 8. Force Tk repaint để CTk widgets hiển thị ngay màu mới
         self.update_idletasks()
 
+        if hasattr(self, "err_listbox"):
+            self._refresh_error_list()   # màu chữ từng mục lỗi theo theme mới
+        self._refresh_theme_btn()
+
         # 9. Lưu settings
         self._save_settings()
+
+    def _refresh_theme_btn(self):
+        """Icon nút theme = chế độ sẽ chuyển sang (đang Tối → ☀️, đang Sáng → 🌙)."""
+        btn = getattr(self, "_btn_theme", None)
+        if btn is None:
+            return
+        is_dark = ctk.get_appearance_mode() == "Dark"
+        btn.configure(text="☀️" if is_dark else "🌙")
+
+    def _toggle_theme(self):
+        """Bấm 1 lần: Tối ↔ Sáng (theme 'System' được xem theo chế độ đang hiển thị)."""
+        new_mode = "Light" if ctk.get_appearance_mode() == "Dark" else "Dark"
+        overlay = self._snapshot_overlay()
+        try:
+            self.apply_theme(new_mode)
+            self.update()
+        finally:
+            if overlay is not None:
+                self._fade_out_overlay(overlay)
+
+    def _snapshot_overlay(self):
+        """Phủ ảnh chụp giao diện hiện tại lên cửa sổ để che việc vẽ lại từng widget
+        khi đổi theme (gây giật). Trả None nếu không chụp được — khi đó đổi theme như cũ."""
+        try:
+            from PIL import ImageGrab, ImageTk
+            self.update_idletasks()
+            x, y = self.winfo_rootx(), self.winfo_rooty()
+            w, h = self.winfo_width(), self.winfo_height()
+            if w < 50 or h < 50 or self.state() == "iconic":
+                return None
+            img = ImageGrab.grab((x, y, x + w, y + h))
+            ov = tk.Toplevel(self)
+            ov.overrideredirect(True)
+            ov.geometry(f"{w}x{h}+{x}+{y}")
+            ov.attributes("-topmost", True)
+            photo = ImageTk.PhotoImage(img)
+            lbl = tk.Label(ov, image=photo, bd=0, highlightthickness=0)
+            lbl.image = photo   # giữ tham chiếu, tránh bị GC
+            lbl.pack()
+            ov.update()
+            return ov
+        except Exception:
+            return None
+
+    def _fade_out_overlay(self, ov, step=0):
+        """Mờ dần lớp phủ (~160ms) rồi huỷ."""
+        try:
+            if step >= 8:
+                ov.destroy()
+                return
+            ov.attributes("-alpha", 1.0 - (step + 1) / 8)
+            self.after(20, lambda: self._fade_out_overlay(ov, step + 1))
+        except Exception:
+            try:
+                ov.destroy()
+            except Exception:
+                pass
 
     def _open_settings(self):
         """Popup Cài đặt redesign: Theme + Tỷ lệ hiển thị."""
@@ -630,7 +710,7 @@ class BOMToolApp(ctk.CTk):
         dlg = ctk.CTkToplevel(self)
         dlg.withdraw()
         dlg.title("Cài đặt")
-        dlg.geometry("400x270")
+        dlg.geometry("400x190")
         dlg.resizable(False, False)
         dlg.transient(self)
         dlg.protocol("WM_DELETE_WINDOW", dlg.destroy)
@@ -640,36 +720,17 @@ class BOMToolApp(ctk.CTk):
         hdr = ctk.CTkFrame(dlg, fg_color="transparent")
         hdr.pack(fill="x", padx=PAD_LG, pady=(16, 0))
         ctk.CTkLabel(hdr, text="⚙️  Cài đặt",
-            font=ctk.CTkFont("Segoe UI", 15, "bold")).pack(side="left")
-
-        # ── Giao diện ────────────────────────────────────────────────────────────
-        ctk.CTkLabel(dlg, text="Giao diện",
-            font=ctk.CTkFont(*FONT_MD_B),
-            anchor="w").pack(fill="x", padx=PAD_LG, pady=(14, 4))
-
-        _theme_labels = {"Dark": "🌙 Tối", "Light": "☀️ Sáng", "System": "💻 Hệ thống"}
-        _label_to_mode = {v: k for k, v in _theme_labels.items()}
-        _current_label = _theme_labels.get(
-            getattr(self, "_current_theme", "Dark"), "🌙 Tối")
-
-        theme_seg = ctk.CTkSegmentedButton(
-            dlg,
-            values=["🌙 Tối", "☀️ Sáng", "💻 Hệ thống"],
-            font=ctk.CTkFont(*FONT_MD),
-            command=lambda lbl: self.apply_theme(_label_to_mode.get(lbl, "Dark")),
-        )
-        theme_seg.set(_current_label)
-        theme_seg.pack(fill="x", padx=PAD_LG)
+            font=ctk_font(*FONT_LABEL)).pack(side="left")
 
         # ── Tỷ lệ hiển thị ───────────────────────────────────────────────────────
         ctk.CTkLabel(dlg, text="Tỷ lệ hiển thị",
-            font=ctk.CTkFont(*FONT_MD_B),
-            anchor="w").pack(fill="x", padx=PAD_LG, pady=(16, 4))
+            font=ctk_font(*FONT_MD_B),
+            anchor="w").pack(fill="x", padx=PAD_LG, pady=(14, 4))
 
         scale_seg = ctk.CTkSegmentedButton(
             dlg,
             values=["80%", "90%", "100%", "110%", "120%"],
-            font=ctk.CTkFont(*FONT_BODY),
+            font=ctk_font(*FONT_BODY),
             command=self.change_scaling_event,
         )
         scale_seg.set(getattr(self, "_current_scaling_pct", "100%"))
@@ -731,15 +792,15 @@ class BOMToolApp(ctk.CTk):
         logo_wrap.pack(pady=(0, 22))
         logo_wrap.pack_propagate(False)
         ctk.CTkLabel(logo_wrap, text="B",
-                     font=ctk.CTkFont(*FONT_ICON),
+                     font=ctk_font(*FONT_ICON),
                      text_color=dt["btn_primary"]).place(relx=0.5, rely=0.48, anchor="center")
 
         # Tên app
-        ctk.CTkLabel(center, text="BOHO IMPORT BOM/THDM",
-                     font=ctk.CTkFont("Segoe UI", 24, "bold"),
+        ctk.CTkLabel(center, text="BOHO IMPORT BOM",
+                     font=ctk_font(*FONT_TITLE),
                      text_color=dt["text_main"]).pack()
         ctk.CTkLabel(center, text=f"v{APP_VERSION}  —  BOHO",
-                     font=ctk.CTkFont(*FONT_MD),
+                     font=ctk_font(*FONT_MD),
                      text_color=dt["text_muted"]).pack(pady=(3, 22))
 
         # Separator
@@ -752,16 +813,16 @@ class BOMToolApp(ctk.CTk):
         db_card = ctk.CTkFrame(center, fg_color=dt["bg_main"], corner_radius=10)
         db_card.pack(pady=(0, 26), ipadx=24, ipady=4)
         ctk.CTkLabel(db_card, text=f"🖧  {server}",
-                     font=ctk.CTkFont(*FONT_LABEL_N),
+                     font=ctk_font(*FONT_LABEL_N),
                      text_color=dt["tv_text"]).pack(padx=28, pady=(12, 3))
         ctk.CTkLabel(db_card, text=f"📋  {database}",
-                     font=ctk.CTkFont(*FONT_MD),
+                     font=ctk_font(*FONT_MD),
                      text_color=dt["text_muted"]).pack(padx=28, pady=(0, 12))
 
         # Status label
         self._startup_status_lbl = ctk.CTkLabel(
-            center, text="⏳  Đang kiểm tra kết nối...",
-            font=ctk.CTkFont(*FONT_LABEL_N),
+            center, text="⏳  Đang kiểm tra kết nối…",
+            font=ctk_font(*FONT_LABEL_N),
             text_color=dt["text_muted"])
         self._startup_status_lbl.pack()
 
@@ -779,7 +840,7 @@ class BOMToolApp(ctk.CTk):
             elapsed = time.time() - t0
             time.sleep(max(0, 0.8 - elapsed))
             self.after(0, lambda: self._startup_check_done(False,
-                "Chưa có cấu hình DB (db_config.json)."))
+                "Chưa có cấu hình DB."))
             return
         try:
             conn = self._get_db_conn(timeout_sec=15)
@@ -797,14 +858,14 @@ class BOMToolApp(ctk.CTk):
         dt = THEMES[ctk.get_appearance_mode()]
         if ok:
             self._startup_status_lbl.configure(
-                text="✅  Kết nối thành công — Đang mở ứng dụng...",
+                text="✅  Kết nối thành công",
                 text_color=dt["log_ok"])
             self.after(1200, self._dismiss_startup_overlay)
         else:
             if attempt < 3:
                 # Tự động thử lại tối đa 3 lần sau 2s — cho server/VPN kịp ổn định
                 self._startup_status_lbl.configure(
-                    text=f"⏳  Đang thử lại ({attempt}/3)...",
+                    text=f"⏳  Đang thử lại ({attempt}/3)…",
                     text_color=dt["text_muted"])
                 def _retry_worker(att=attempt):
                     import time
@@ -827,13 +888,13 @@ class BOMToolApp(ctk.CTk):
                 err_short = str(error)[:200] if error else "Không rõ nguyên nhân"
                 ctk.CTkLabel(bf,
                     text=err_short,
-                    font=ctk.CTkFont(*FONT_SMALL),
+                    font=ctk_font(*FONT_SMALL),
                     text_color=dt["text_muted"],
                     wraplength=420,
                     justify="left").pack(pady=(0, 8))
                 ctk.CTkLabel(bf,
-                    text="⚠️  Kiểm tra VPN hoặc cấu hình DB rồi thử lại",
-                    font=ctk.CTkFont(*FONT_BODY),
+                    text="Kiểm tra VPN/mạng rồi thử lại.",
+                    font=ctk_font(*FONT_BODY),
                     text_color=dt["text_muted"]).pack(pady=(0, 14))
                 row = ctk.CTkFrame(bf, fg_color="transparent")
                 row.pack()
@@ -856,7 +917,7 @@ class BOMToolApp(ctk.CTk):
             w.destroy()
         self._startup_btn_frame.pack_forget()
         self._startup_status_lbl.configure(
-            text="⏳  Đang thử lại...", text_color=dt["text_muted"])
+            text="⏳  Đang thử lại…", text_color=dt["text_muted"])
         threading.Thread(target=self._startup_check_worker, daemon=True).start()
 
     def _dismiss_startup_overlay(self):
@@ -879,6 +940,15 @@ class BOMToolApp(ctk.CTk):
             self.after(600, self._load_bom_orders)
 
 
+    # Tạm ẩn tab THDM + Catalog (chỉ làm BOM). Chỉ ẩn hiển thị, vẫn build đầy đủ để code khác
+    # tham chiếu không lỗi — bật lại: False.
+    _HIDE_NON_BOM_TABS = True
+    # Hàng tên cột SQL (ItemName, Quantity…) dưới tiêu đề bảng BOM — thông tin kỹ thuật, ẩn mặc định.
+    _SHOW_SQL_ROW = False
+    _bom_row_off = 0          # số hàng phụ phía trên dữ liệu trong lưới (1 khi hiện hàng SQL)
+    _tb_full_req = None       # bề rộng thanh công cụ ở dạng đầy đủ (đo 1 lần)
+    _tb_compact = False
+
     def _build_ui(self):
         # ── Root grid ────────────────────────────────────────────────────────
         self.grid_columnconfigure(0, weight=1)
@@ -895,8 +965,8 @@ class BOMToolApp(ctk.CTk):
 
         # Trái: App name
         ctk.CTkLabel(topbar,
-            text="🏭  BOHO  BOM / THDM",
-            font=ctk.CTkFont(*FONT_LABEL),
+            text="🏭  BOHO  BOM",
+            font=ctk_font(*FONT_LABEL),
             text_color=("#16A34A", "#4EC9B0")).grid(
             row=0, column=0, padx=(14, 16), pady=PAD_MD)
 
@@ -909,16 +979,17 @@ class BOMToolApp(ctk.CTk):
         else:
             db_txt   = "⚠️  Chưa có db_config.json"
             db_color = ("#D97706", "#D7BA7D")
-        ctk.CTkLabel(topbar, text=db_txt,
-            font=ctk.CTkFont(*FONT_BODY),
-            text_color=db_color).grid(row=0, column=1, sticky="w")
+        self._lbl_db_info = ctk.CTkLabel(topbar, text=db_txt,
+            font=ctk_font(*FONT_BODY),
+            text_color=db_color)
+        self._lbl_db_info.grid(row=0, column=1, sticky="w")
 
         # Phải: status + mapping + settings
         right_bar = ctk.CTkFrame(topbar, fg_color="transparent")
         right_bar.grid(row=0, column=2, padx=(0, 10))
 
         self.lbl_status = CLabel(right_bar, text="Sẵn sàng...",
-            font=ctk.CTkFont("Segoe UI", 11, slant="italic"),
+            font=ctk_font(*FONT_SMALL_I),
             text_color=("gray40", "gray55"),
             fg_color="transparent")
         self.lbl_status.pack(side=tk.LEFT, padx=(0, 10))
@@ -928,14 +999,26 @@ class BOMToolApp(ctk.CTk):
 
         mapping_ok = bool(self.mapping)
         _mapping_text_color = ("#16A34A","#4ADE80") if mapping_ok else ("#D97706","#D7BA7D")
-        ctk.CTkButton(right_bar, text="⚙️  Mapping",
+        self._btn_mapping = ctk.CTkButton(right_bar, text="⚙️  Mapping",
             command=self._open_mapping_window,
             fg_color="transparent", border_width=1,
             text_color=_mapping_text_color,
             border_color=_mapping_text_color,
             hover_color=("gray90","gray25"),
-            font=ctk.CTkFont(*FONT_BODY),
-            width=110, height=28, corner_radius=6).pack(side=tk.LEFT, padx=(0, 4))
+            font=ctk_font(*FONT_BODY),
+            width=110, height=28, corner_radius=6)
+        self._btn_mapping.pack(side=tk.LEFT, padx=(0, 4))
+
+        # Đổi giao diện Tối / Sáng / Hệ thống — đặt ngay trên topbar
+        self._btn_theme = ctk.CTkButton(right_bar, text="",
+            command=self._toggle_theme,
+            fg_color=("#E5E7EB", "#2D2D2D"),
+            hover_color=("#D1D5DB", "#3A3A3A"),
+            text_color=("#1F2937", "#F3F4F6"),
+            font=ctk_font("Segoe UI Emoji", 14),
+            width=48, height=34, corner_radius=8)
+        self._btn_theme.pack(side=tk.LEFT, padx=(0, 6))
+        self._refresh_theme_btn()
 
         self._btn_settings = ctk.CTkButton(right_bar, text="🎨",
             command=self._open_settings,
@@ -943,7 +1026,7 @@ class BOMToolApp(ctk.CTk):
             text_color=("gray50","gray60"),
             border_color=("gray50","gray60"),
             hover_color=("gray90","gray25"),
-            font=ctk.CTkFont(*FONT_BODY),
+            font=ctk_font(*FONT_BODY),
             width=34, height=28, corner_radius=6)
         self._btn_settings.pack(side=tk.LEFT, padx=(4, 0))
 
@@ -953,7 +1036,7 @@ class BOMToolApp(ctk.CTk):
             fg_color=("#16A34A","#16A34A"),
             hover_color=("#15803D","#15803D"),
             text_color="#FFFFFF",
-            font=ctk.CTkFont(*FONT_BODY),
+            font=ctk_font(*FONT_BODY),
             height=28, corner_radius=6)
         self._update_info   = None   # dict từ version.json nếu có bản mới
         self._update_zip    = None   # đường dẫn ZIP sau khi tải xong
@@ -962,11 +1045,11 @@ class BOMToolApp(ctk.CTk):
         self.nb = ctk.CTkTabview(self,
             fg_color=("gray95", C["bg"]),
             segmented_button_fg_color=("gray82", C["panel"]),
-            segmented_button_selected_color=("#007ACC", "#007ACC"),
-            segmented_button_selected_hover_color=("#005999", "#005999"),
-            segmented_button_unselected_color=("gray82", C["panel"]),
-            segmented_button_unselected_hover_color=("gray76", "#2D2D2D"),
-            text_color=("gray20", C["text"]),
+            segmented_button_selected_color=("#C9DDF3", "#007ACC"),
+            segmented_button_selected_hover_color=("#B5D0EC", "#005999"),
+            segmented_button_unselected_color=("#DDE3EB", C["panel"]),
+            segmented_button_unselected_hover_color=("#D0D8E2", "#2D2D2D"),
+            text_color=("#1F2937", C["text"]),
             border_width=0, corner_radius=0)
         self.nb.grid(row=1, column=0, sticky="nsew", padx=0, pady=0)
         self.nb.add(TAB_IMPORT)
@@ -974,7 +1057,7 @@ class BOMToolApp(ctk.CTk):
         self.nb.add(TAB_CATALOG)
         try:
             self.nb._segmented_button.configure(
-                font=ctk.CTkFont(*FONT_MD_B), height=38)
+                font=ctk_font(*FONT_MD_B), height=38)
             self.nb._segmented_button.grid_configure(sticky="w", padx=PAD_MD, pady=(6, 0))
         except Exception:
             pass
@@ -990,6 +1073,58 @@ class BOMToolApp(ctk.CTk):
         # Reload khi user switch sang tab THDM (bắt sự kiện tab change)
         self.nb.configure(command=self._on_tab_changed)
 
+        if self._HIDE_NON_BOM_TABS:
+            try:
+                # Chỉ còn 1 tab → bỏ hẳn dải tab (tiết kiệm 1 hàng chiều cao)
+                self.nb.set(TAB_IMPORT)
+                self.nb._outer_spacing = 0
+                self.nb._outer_button_overhang = 0
+                self.nb._button_height = 0
+                self.nb._configure_grid()
+                self.nb._segmented_button.grid_remove()
+            except Exception as _e:
+                logging.getLogger(__name__).warning("Không ẩn được tab: %s", _e)
+
+            # Tạm ẩn cho gọn: thông tin DB, nút Mapping, nút 🎨 Cài đặt, thanh log
+            # dưới cùng. Chỉ ẩn hiển thị — widget/logic vẫn còn (log vẫn ghi).
+            for _name in ("_lbl_db_info", "_btn_mapping", "_btn_settings"):
+                try:
+                    _w = getattr(self, _name)
+                    (_w.grid_remove if _w.winfo_manager() == "grid" else _w.pack_forget)()
+                except Exception as _e:
+                    logging.getLogger(__name__).warning("Không ẩn được %s: %s", _name, _e)
+            try:
+                self.log_panel.grid_remove()
+            except Exception as _e:
+                logging.getLogger(__name__).warning("Không ẩn được log panel: %s", _e)
+
+    def _measure_toolbar(self):
+        """Đo bề rộng thanh công cụ ở dạng đầy đủ (1 lần) để biết khi nào phải thu gọn."""
+        try:
+            total = 0
+            for w in self._bom_bar.pack_slaves():
+                px = w.pack_info().get("padx", 0)
+                px = sum(int(p) for p in px) if isinstance(px, (tuple, list)) else 2 * int(px)
+                # Ô Dự án co lại được → chỉ tính 60% bề rộng mong muốn
+                rw = w.winfo_reqwidth() * (0.6 if w is self.ent_bom_project else 1)
+                total += rw + px
+            self._tb_full_req = int(total)
+            self._fit_toolbar()
+        except Exception:
+            pass
+
+    def _fit_toolbar(self, _event=None):
+        """Cửa sổ hẹp → rút gọn chữ nút phụ (Làm mới → biểu tượng, Import vào BRAVO → Import)."""
+        if not self._tb_full_req:
+            return
+        compact = self._bom_bar.winfo_width() < self._tb_full_req
+        if compact == self._tb_compact:
+            return
+        self._tb_compact = compact
+        self.btn_reset.configure(text="🔄" if compact else "🔄  Làm mới",
+                                 width=44 if compact else 140)
+        self.btn_import.configure(text="🚀  ③  Import" if compact else "🚀  ③  Import vào BRAVO")
+
     def _build_tab_import(self):
         tab = self.nb.tab(TAB_IMPORT)
         dt = THEMES[ctk.get_appearance_mode()]
@@ -1001,9 +1136,10 @@ class BOMToolApp(ctk.CTk):
         bar.pack_propagate(False)
 
         # Ghost Button — style mặc định cho mọi nút phụ (Flat/Minimal)
-        _G = dict(font=ctk.CTkFont(*FONT_BODY_B),
+        _G = dict(font=ctk_font(*FONT_BODY_B),
                   fg_color=("#EBEBEB", "#2D2D2D"),
                   text_color=("#1A1A1A", "#E1E1E1"),
+                  text_color_disabled=("#9AA3AF", "#6B7280"),
                   hover_color=("#D8D8D8", "#3A3A3A"),
                   border_width=1, border_color=("#CCCCCC", "#3C3C3C"),
                   corner_radius=8, height=32)
@@ -1016,7 +1152,9 @@ class BOMToolApp(ctk.CTk):
             b.pack(side=tk.LEFT, padx=(0, 4), pady=10)
             return b
 
-        ctk.CTkFrame(bar, fg_color="transparent", width=8).pack(side=tk.LEFT)
+        self._bom_bar = bar
+        _bar_first = ctk.CTkFrame(bar, fg_color="transparent", width=8)
+        _bar_first.pack(side=tk.LEFT)
 
         self.btn_open = _ab_btn("📂  ①  Chọn file Excel", self._open_file)
 
@@ -1027,23 +1165,23 @@ class BOMToolApp(ctk.CTk):
         ctk.CTkFrame(bar, fg_color=("gray65","#3C3C3C"),
                      width=1, height=28).pack(side=tk.LEFT, padx=6, pady=PAD_MD)
 
-        self.btn_validate = _ab_btn("🔍  ②  Kiểm tra", self._run_validate,
+        self.btn_validate = _ab_btn("🔍  Kiểm tra lại", self._run_validate,
                                     state="disabled")
-        self.btn_report   = _ab_btn("📋  Báo cáo lỗi",
-                                    self._export_validate_report, state="disabled")
+        self.btn_reset    = _ab_btn("🔄  Làm mới", self._reset_form)
+        Tooltip(self.btn_reset, lambda: "Làm mới: xóa file và lựa chọn hiện tại")
 
         ctk.CTkFrame(bar, fg_color=("gray65","#3C3C3C"),
                      width=1, height=28).pack(side=tk.LEFT, padx=6, pady=PAD_MD)
 
-        ctk.CTkLabel(bar, text="Nhân viên:",
-            font=ctk.CTkFont(*FONT_BODY),
+        ctk.CTkLabel(bar, text="②  Nhân viên:",
+            font=ctk_font(*FONT_BODY),
             text_color=("gray40","gray55"),
             fg_color="transparent").pack(side=tk.LEFT, padx=(0, 4))
 
         self.cmb_creator = _SearchCombo(bar,
             values=["— Đang tải... —"],
-            width=200, height=32,
-            font=ctk.CTkFont(*FONT_BODY),
+            width=170, height=32,
+            font=ctk_font(*FONT_BODY),
             command=self._on_creator_change,
             placeholder="— Chọn nhân viên —")
         self.cmb_creator.pack(side=tk.LEFT, padx=(0, 6), pady=10)
@@ -1052,18 +1190,21 @@ class BOMToolApp(ctk.CTk):
                      width=1, height=28).pack(side=tk.LEFT, padx=6, pady=PAD_MD)
 
         ctk.CTkLabel(bar, text="Đơn hàng:",
-            font=ctk.CTkFont(*FONT_BODY),
+            font=ctk_font(*FONT_BODY),
             text_color=("gray40","gray55"),
             fg_color="transparent").pack(side=tk.LEFT, padx=(0, 4))
         self.cmb_order = _SearchCombo(bar,
             values=["— Đang tải... —"],
-            width=200, height=32,
-            font=ctk.CTkFont(*FONT_BODY),
+            width=170, height=32,
+            font=ctk_font(*FONT_BODY),
             command=self._on_bom_order_change,
             placeholder="— Chọn đơn hàng —",
             state="disabled")
         self.cmb_order.set("— Chọn đơn hàng —")
         self.cmb_order.pack(side=tk.LEFT, padx=(0, 6), pady=10)
+        # Trường bắt buộc: báo đỏ ngay khi mở app, gỡ đỏ khi đã chọn
+        self.cmb_creator.set_error(True)
+        self.cmb_order.set_error(True)
 
         ctk.CTkFrame(bar, fg_color=("gray65","#3C3C3C"),
                      width=1, height=28).pack(side=tk.LEFT, padx=6, pady=PAD_MD)
@@ -1074,34 +1215,31 @@ class BOMToolApp(ctk.CTk):
         # + truncate + Tooltip xem đầy đủ khi hover — tránh tự co giãn đẩy
         # lệch toolbar khi tên dự án dài.
         ctk.CTkLabel(bar, text="Dự án:",
-            font=ctk.CTkFont(*FONT_BODY),
+            font=ctk_font(*FONT_BODY),
             text_color=("gray40","gray55"),
             fg_color="transparent").pack(side=tk.LEFT, padx=(0, 4))
         self._bom_project_full_text = ''
         self.ent_bom_project = ctk.CTkEntry(bar,
-            font=ctk.CTkFont(*FONT_BODY_B),
-            height=32, width=220, corner_radius=6,
+            font=ctk_font(*FONT_BODY_B),
+            height=32, width=180, corner_radius=6,
             state="disabled",
-            fg_color=("#FFFFFF", "#2D2D30"),
+            fg_color=("#EEF1F6", "#2D2D30"),
             text_color=("#0F172A", "#E8E8E8"),
-            border_color=("#E2E8F0", "#444444"))
-        self.ent_bom_project.pack(side=tk.LEFT, padx=(0, 6), pady=10)
+            border_color=("#C3CCD8", "#444444"))
+        # Ô Dự án nhận phần chỗ còn lại: cửa sổ rộng thì dài ra, hẹp thì co lại
+        self.ent_bom_project.pack(side=tk.LEFT, padx=(0, 6), pady=10, fill=tk.X, expand=True)
         Tooltip(self.ent_bom_project, lambda: self._bom_project_full_text)
         self._set_bom_project_display('')
 
-        ctk.CTkFrame(bar, fg_color=("gray65","#3C3C3C"),
-                     width=1, height=28).pack(side=tk.LEFT, padx=6, pady=PAD_MD)
-
         # ── Primary: nút hành động chính duy nhất — Accent Blue ──────────────
-        self.btn_import = CButton(bar, text="🚀  ③  Import vào BRAVO",
+        # Pack TRƯỚC mọi thứ, ghim bên phải → cửa sổ hẹp cũng không bao giờ bị đẩy ra ngoài.
+        self.btn_import = CPrimaryButton(bar, text="🚀  ③  Import vào BRAVO",
             command=self._start_import, state="disabled",
-            font=ctk.CTkFont(*FONT_BODY_B),
-            fg_color=("#0066CC", "#0066CC"),
-            hover_color=("#0055AA", "#0055AA"),
-            text_color="#FFFFFF",
-            text_color_disabled="#6B9CD6",
+            font=ctk_font(*FONT_BODY_B),
             corner_radius=8, height=32)
-        self.btn_import.pack(side=tk.LEFT, padx=(0, 4), pady=10)
+        self.btn_import.pack(side=tk.RIGHT, padx=(6, 10), pady=10, before=_bar_first)
+        bar.bind("<Configure>", self._fit_toolbar, add="+")
+        self.after(600, self._measure_toolbar)
 
         self.btn_view_sql = _ab_btn("📋  Xem SQL", self._view_sql_clicked, state="disabled")
         self.btn_view_sql.pack_forget()  # Ẩn tạm — xoá dòng này để bật lại
@@ -1121,51 +1259,90 @@ class BOMToolApp(ctk.CTk):
         body.pack(fill=tk.BOTH, expand=True, pady=(10, 0))
 
         # Sheet list
-        sb_frame = tk.Frame(body, bg=dt["bg_deep"], width=170)
+        sb_frame = tk.Frame(body, bg=dt["bg_deep"], width=270)
         sb_frame.pack(side=tk.LEFT, fill=tk.Y)
         sb_frame.pack_propagate(False)
 
         tk.Label(sb_frame, text="BẢNG DỮ LIỆU",
             bg=dt["bg_deep"], fg=C["muted"],
-            font=("Segoe UI", 9, "bold")).pack(
+            font=FONT_SMALL_B).pack(
             anchor="w", padx=PAD_MD, pady=(10, 4))
 
         lb_wrap = tk.Frame(sb_frame, bg=dt["bg_deep"])
-        lb_wrap.pack(fill=tk.BOTH, expand=True, padx=6, pady=(0, 6))
+        lb_wrap.pack(fill=tk.X, padx=6, pady=(0, 6))
         self.listbox = tk.Listbox(lb_wrap,
             bg=dt["bg_deep"], fg=dt["tv_text"],
             selectbackground=dt["tv_sel"], selectforeground=dt["tv_text"],
-            font=FONT_BODY,
+            font=FONT_BODY, height=5, exportselection=False,
             relief=tk.FLAT, bd=0, highlightthickness=1,
             highlightcolor=dt["accent"], highlightbackground=dt["border"],
             activestyle="none")
-        self.listbox.pack(fill=tk.BOTH, expand=True)
+        self.listbox.pack(fill=tk.X)
         self.listbox.bind("<<ListboxSelect>>", self._on_select)
+
+        # Danh sách lỗi/cảnh báo (mọi bảng) — bấm 1 mục để nhảy tới ô lỗi
+        self._err_title = tk.Label(sb_frame, text="DANH SÁCH LỖI",
+            bg=dt["bg_deep"], fg=C["muted"],
+            font=FONT_SMALL_B, anchor="w")
+        self._err_title.pack(fill=tk.X, padx=PAD_MD, pady=(4, 4))
+        self._err_detail = tk.Label(sb_frame, text="", justify="left", anchor="w",
+            bg=dt["bg_deep"], fg=dt["text_muted"], font=FONT_SMALL, wraplength=250)
+        self._err_detail.pack(side=tk.BOTTOM, fill=tk.X, padx=PAD_MD, pady=(0, 6))
+        err_wrap = tk.Frame(sb_frame, bg=dt["bg_deep"])
+        err_wrap.pack(fill=tk.BOTH, expand=True, padx=6, pady=(0, 4))
+        self._err_sb = ttk.Scrollbar(err_wrap, orient="vertical", style="Slim.Vertical.TScrollbar")
+        self._err_sb.pack(side=tk.RIGHT, fill=tk.Y)
+        self.err_listbox = tk.Listbox(err_wrap,
+            bg=dt["bg_deep"], fg=dt["tv_text"],
+            selectbackground=dt["tv_sel"], selectforeground=dt["tv_text"],
+            font=FONT_SMALL, exportselection=False,
+            relief=tk.FLAT, bd=0, highlightthickness=1,
+            highlightcolor=dt["accent"], highlightbackground=dt["border"],
+            activestyle="none", yscrollcommand=self._err_sb.set)
+        self._err_sb.configure(command=self.err_listbox.yview)
+        self.err_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self.err_listbox.bind("<<ListboxSelect>>", self._on_err_list_click)
+        self._err_items = []   # song song với err_listbox: dict(table,row,col,severity,message)
 
         # Separator
         tk.Frame(body, bg=dt["border"], width=1).pack(side=tk.LEFT, fill=tk.Y)
 
         # Content phải — card với nền panel và viền mảnh (fix horizontal scrollbar)
-        right = ctk.CTkFrame(body, fg_color=("#FFFFFF", C["panel"]),
+        right = ctk.CTkFrame(body, fg_color=("#EEF1F6", C["panel"]),
                              corner_radius=6, border_width=1,
-                             border_color=("#E2E8F0", C["border"]))
+                             border_color=("#C3CCD8", C["border"]))
         right.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 6), pady=6)
         right.rowconfigure(0, weight=0)   # lbl_table
         right.rowconfigure(1, weight=0)   # _warn_outer (ẩn/hiện)
         right.rowconfigure(2, weight=1)   # _tf_outer — luôn chiếm phần còn lại
+        right.rowconfigure(3, weight=0)   # lbl_hint — ghi chú ngữ cảnh dưới bảng
         right.columnconfigure(0, weight=1)
 
         self.lbl_table = CLabel(right,
             text="— Chưa có dữ liệu —",
-            font=ctk.CTkFont(*FONT_LABEL),
+            font=ctk_font(*FONT_LABEL),
             text_color=("gray50","gray60"),
             fg_color="transparent", anchor="w")
         self.lbl_table.grid(row=0, column=0, sticky="ew", pady=(0, 2))
+        if self._HIDE_NON_BOM_TABS:
+            # Chỉ còn tab BOM → trạng thái nằm ngay trên bảng thay vì góc phải thanh trên cùng
+            try:
+                self.lbl_status.destroy()
+            except Exception:
+                pass
+            self.lbl_status = CLabel(right, text="Sẵn sàng",
+                font=ctk_font(*FONT_SMALL_I),
+                text_color=("gray40", "gray55"),
+                fg_color="transparent", anchor="e")
+            self.lbl_status.grid(row=0, column=1, sticky="e", padx=(8, 12), pady=(0, 2))
+            Tooltip(self.lbl_status,
+                lambda: ("Bỏ qua: " + ", ".join(self._skipped_sheets))
+                        if self._skipped_sheets else "")
 
         # ── Warning panel (thay thế lbl_errors) ─────────────────────────────
         self._warn_outer = tk.Frame(right, bg=dt["bg_main"])
         # Đặt vào grid row=1, ẩn ngay bằng grid_remove() (giữ cấu hình grid)
-        self._warn_outer.grid(row=1, column=0, sticky="ew")
+        self._warn_outer.grid(row=1, column=0, columnspan=2, sticky="ew")
         self._warn_outer.grid_remove()   # ẩn khi chưa có lỗi
 
         # header: badge + text tóm tắt + toggle
@@ -1215,9 +1392,16 @@ class BOMToolApp(ctk.CTk):
         # map: warn_tree iid → main tree iid (populated trong _show_table)
         self._warn_iid_to_tree_iid = {}
 
+        # Ghi chú ngữ cảnh dưới bảng (vd chọn ô Đvt → giải nghĩa BB / CỤM)
+        self.lbl_hint = CLabel(right, text="",
+            font=ctk_font(*FONT_SMALL_B),
+            text_color=("#B45309", "#FBBF24"),
+            fg_color="transparent", anchor="w")
+        self.lbl_hint.grid(row=3, column=0, columnspan=2, sticky="ew", padx=10, pady=(2, 4))
+
         # Empty state overlay
         self._tf_outer = tk.Frame(right, bg=dt["bg_main"])
-        self._tf_outer.grid(row=2, column=0, sticky="nsew", pady=(4, 0))
+        self._tf_outer.grid(row=2, column=0, columnspan=2, sticky="nsew", pady=(4, 0))
 
         # Match màu nền sheet_table_bg: SheetTable giờ dùng dt["sheet_table_bg"]
         # (không còn hardcode #000000) nên overlay cũng phải đồng bộ theo theme.
@@ -1228,22 +1412,37 @@ class BOMToolApp(ctk.CTk):
         # sub-frame chứa nội dung, căn giữa bên trong _empty_frame
         _ec = tk.Frame(self._empty_frame, bg=_EMPTY_BG)
         _ec.place(relx=0.5, rely=0.45, anchor="center")
+        self._empty_inner = _ec   # apply_theme cần retint cả frame này
         self._empty_lbl_icon = tk.Label(_ec, text="📂", bg=_EMPTY_BG,
                  fg=dt["text_muted"], font=FONT_HERO)
         self._empty_lbl_icon.pack()
         self._empty_lbl_main = tk.Label(_ec,
-                 text="①  Chọn file Excel ở sidebar để bắt đầu",
+                 text="①  Chọn file Excel để bắt đầu",
                  bg=_EMPTY_BG, fg=dt["text_muted"], font=FONT_LABEL_N)
         self._empty_lbl_main.pack(pady=(4, 0))
         self._empty_lbl_hint = tk.Label(_ec,
-                 text="Chọn Nhân viên  →  ②  Kiểm tra  →  ③  Import vào BRAVO",
+                 text="Tự kiểm tra khi nạp file  →  ②  Chọn Nhân viên & Đơn hàng  →  ③  Import vào BRAVO",
                  bg=_EMPTY_BG, fg=dt["text_muted"], font=FONT_BODY)
         self._empty_lbl_hint.pack(pady=(2, 0))
 
         tf = self._tf_outer
         if _HAS_TKSHEET:
             self.tree = SheetTable(tf)
+            self.tree.enable_group_band()
             self.tree.grid(row=0, column=0, sticky="nsew")
+            self.tree.enable_wrap()
+            # Cho sửa ô và Ctrl+C/Ctrl+V (đồng bộ ngược vào df để Kiểm tra lại đúng dữ liệu).
+            # Cut/delete/undo/chèn-xóa dòng làm lệch ánh xạ ô↔df → tắt trên lưới BOM.
+            try:
+                self.tree.sheet.disable_bindings(
+                    "cut", "delete", "undo", "rc_insert_row", "rc_delete_row")
+                self.tree.sheet.extra_bindings(
+                    [("end_edit_cell", self._on_bom_cell_edited),
+                     ("end_ctrl_v", self._on_bom_paste),
+                     ("cell_select", self._on_bom_cell_select),
+                     ("column_select", self._on_bom_cell_select)])
+            except Exception as _e:
+                logging.getLogger(__name__).warning("Không gắn được sửa ô BOM: %s", _e)
         else:
             vsb = ttk.Scrollbar(tf, orient=tk.VERTICAL,   style="Slim.Vertical.TScrollbar")
             hsb = ttk.Scrollbar(tf, orient=tk.HORIZONTAL, style="Slim.Horizontal.TScrollbar")
@@ -1254,7 +1453,8 @@ class BOMToolApp(ctk.CTk):
             self.tree.grid(row=0, column=0, sticky="nsew")
             vsb.grid(row=0, column=1, sticky="ns")
             hsb.grid(row=1, column=0, sticky="ew")
-        tf.rowconfigure(0, weight=1); tf.columnconfigure(0, weight=1)
+        # SheetTable: hàng 0 là dải tiêu đề nhóm, bảng ở hàng 1
+        tf.rowconfigure(1 if _HAS_TKSHEET else 0, weight=1); tf.columnconfigure(0, weight=1)
 
         # self.tree được tạo SAU _empty_frame nên theo thứ tự chồng lớp mặc
         # định của Tk, nó nằm TRÊN _empty_frame và che khuất hoàn toàn màn
@@ -1268,8 +1468,12 @@ class BOMToolApp(ctk.CTk):
             font=FONT_MD)
         self.tree.tag_configure("oddrow",  background=dt["bg_main"])
         self.tree.tag_configure("evenrow", background=dt["bg_panel"])
-        self.tree.tag_configure("err_row",  background=C["badge_err_bg"])
-        self.tree.tag_configure("warn_row", background=C["badge_warn_bg"])
+        # Màu theo theme hiện tại (C là bảng màu Dark cố định → lúc mở app ở Light sẽ ra dòng lỗi nền tối)
+        self.tree.tag_configure("err_row",  background=dt["badge_err_bg"],  foreground=dt["badge_err_fg"])
+        self.tree.tag_configure("warn_row", background=dt["badge_warn_bg"], foreground=dt["badge_warn_fg"])
+        self.tree.tag_configure("group_row", background=dt["group_row_bg"], foreground=dt["group_row_fg"])
+        self.tree.tag_configure("err_cell",  background=dt["cell_err_bg"],  foreground=dt["cell_err_fg"])
+        self.tree.tag_configure("warn_cell", background=dt["cell_warn_bg"], foreground=dt["cell_warn_fg"])
         # Căn giữa riêng hàng phụ SQL (giống THDM); dữ liệu vẫn căn trái
         if hasattr(self.tree, 'center_rows_by_tag'):
             self.tree.center_rows_by_tag("sql_names")
@@ -1456,10 +1660,7 @@ class BOMToolApp(ctk.CTk):
         dlg.transient(self)
         dlg.grab_set()
         self._build_mapping_content(dlg)
-        dlg.update_idletasks()
-        mx = self.winfo_rootx() + (self.winfo_width()  - dlg.winfo_width())  // 2
-        my = self.winfo_rooty() + (self.winfo_height() - dlg.winfo_height()) // 2
-        dlg.geometry(f"1200x680+{mx}+{my}")
+        self._center_dialog(dlg, 1200, 680)
         dlg.deiconify()
         dlg.focus_force()
 
@@ -1473,7 +1674,7 @@ class BOMToolApp(ctk.CTk):
         inner.pack(fill=tk.X, padx=PAD_MD, pady=PAD_SM)
 
         ctk.CTkLabel(inner, text="Phần:",
-            font=ctk.CTkFont(*FONT_MD_B)).pack(side=tk.LEFT, padx=(0,8))
+            font=ctk_font(*FONT_MD_B)).pack(side=tk.LEFT, padx=(0,8))
 
         _sect_names = list(self.mapping.get('_CONFIG', {}).keys())
         self._map_section_var = tk.StringVar(
@@ -1487,7 +1688,7 @@ class BOMToolApp(ctk.CTk):
         for txt, color in [("✅ OK","#4EC9B0"), ("⚠️ Thiếu","#D7BA7D"),
                             ("❓ Cần xác nhận","#F97316"), ("🔧 System","gray")]:
             ctk.CTkLabel(inner, text=txt,
-                font=ctk.CTkFont(*FONT_MD),
+                font=ctk_font(*FONT_MD),
                 text_color=color).pack(side=tk.RIGHT, padx=6)
 
         MAP_COLS   = ["SQL Column","Tên trên Excel","Kiểu DL","Bắt buộc",
@@ -1611,7 +1812,7 @@ class BOMToolApp(ctk.CTk):
 
         self.btn_catalog_load = ctk.CTkButton(bar, text="🔄  Tải dữ liệu",
             command=self._catalog_load,
-            font=ctk.CTkFont(*FONT_BODY_B),
+            font=ctk_font(*FONT_BODY_B),
             fg_color=("#1D4ED8","#1D4ED8"),
             hover_color=("#1E40AF","#1E40AF"),
             height=32, corner_radius=6)
@@ -1619,7 +1820,7 @@ class BOMToolApp(ctk.CTk):
 
         self.btn_catalog_export = CButton(bar, text="📤  Export Excel",
             command=self._catalog_export_excel,
-            font=ctk.CTkFont(*FONT_BODY_B),
+            font=ctk_font(*FONT_BODY_B),
             fg_color="transparent", border_width=1,
             text_color=("#3B82F6","#60A5FA"),
             border_color=("#3B82F6","#60A5FA"),
@@ -1633,12 +1834,12 @@ class BOMToolApp(ctk.CTk):
         self.catalog_search_var = tk.StringVar()
         self.catalog_search_var.trace_add("write", lambda *_: self._catalog_filter())
         ctk.CTkEntry(bar, textvariable=self.catalog_search_var,
-            font=ctk.CTkFont(*FONT_BODY),
+            font=ctk_font(*FONT_BODY),
             placeholder_text="🔍  Tìm mã / tên...",
             width=220, height=32, corner_radius=6).pack(side=tk.LEFT, pady=PAD_SM)
 
         self.lbl_catalog_status = CLabel(bar, text="—  Chưa tải",
-            font=ctk.CTkFont(*FONT_BODY),
+            font=ctk_font(*FONT_BODY),
             text_color=("gray40","gray55"),
             fg_color="transparent")
         self.lbl_catalog_status.pack(side=tk.RIGHT, padx=(0,12))
@@ -1654,7 +1855,7 @@ class BOMToolApp(ctk.CTk):
 
         self.lbl_catalog_table = CLabel(content_card,
             text="— Chưa tải dữ liệu —",
-            font=ctk.CTkFont(*FONT_LABEL),
+            font=ctk_font(*FONT_LABEL),
             text_color=("gray50", "gray60"),
             fg_color="transparent", anchor="w")
         self.lbl_catalog_table.grid(row=0, column=0, sticky="ew", padx=PAD_SM, pady=(2, 2))
@@ -1719,21 +1920,21 @@ class BOMToolApp(ctk.CTk):
         ctk.CTkFrame(bar, fg_color="transparent", width=8).pack(side=tk.LEFT)
 
         CLabel(bar, text="Template NVL:",
-            font=ctk.CTkFont(*FONT_BODY),
+            font=ctk_font(*FONT_BODY),
             text_color=("gray40","gray65"),
             fg_color="transparent").pack(side=tk.LEFT, padx=(0,4))
 
         self.cmb_item_template = _SearchCombo(bar,
             values=["— Đang tải... —"],
             width=220, height=32,
-            font=ctk.CTkFont(*FONT_BODY),
+            font=ctk_font(*FONT_BODY),
             command=self._on_catalog_template_change,
             placeholder="— Chọn Template —")
         self.cmb_item_template.pack(side=tk.LEFT, padx=(0,6), pady=PAD_SM)
 
         self.btn_export_template = CButton(bar, text="📋  Xuất Template",
             command=self._catalog_export_template_excel,
-            font=ctk.CTkFont(*FONT_BODY_B),
+            font=ctk_font(*FONT_BODY_B),
             fg_color="transparent", border_width=1,
             text_color=("#059669","#34D399"),
             border_color=("#059669","#34D399"),
@@ -1746,7 +1947,7 @@ class BOMToolApp(ctk.CTk):
 
         self.btn_catalog_file_select = CButton(bar, text="📂  Chọn file Excel",
             command=self._catalog_select_import_file,
-            font=ctk.CTkFont(*FONT_BODY_B),
+            font=ctk_font(*FONT_BODY_B),
             fg_color="transparent", border_width=1,
             text_color=("#D97706","#FCD34D"),
             border_color=("#D97706","#FCD34D"),
@@ -1756,7 +1957,7 @@ class BOMToolApp(ctk.CTk):
 
         self.btn_import_template = CButton(bar, text="📥  Import",
             command=self._catalog_import_template_excel,
-            font=ctk.CTkFont(*FONT_BODY_B),
+            font=ctk_font(*FONT_BODY_B),
             fg_color="transparent", border_width=1,
             text_color=("#7C3AED","#A78BFA"),
             border_color=("#7C3AED","#A78BFA"),
@@ -1766,7 +1967,7 @@ class BOMToolApp(ctk.CTk):
 
         self.btn_preview_sql = CButton(bar, text="📋  Preview SQL",
             command=self._catalog_preview_sql,
-            font=ctk.CTkFont(*FONT_BODY_B),
+            font=ctk_font(*FONT_BODY_B),
             fg_color="transparent", border_width=1,
             text_color=("#0369A1","#38BDF8"),
             border_color=("#0369A1","#38BDF8"),
@@ -1775,7 +1976,7 @@ class BOMToolApp(ctk.CTk):
         # btn_preview_sql: tạm ẩn, giữ widget để state logic không bị lỗi
 
         self.lbl_import_status = CLabel(bar, text="—  Chưa chọn file",
-            font=ctk.CTkFont(*FONT_BODY),
+            font=ctk_font(*FONT_BODY),
             text_color=("gray40","gray55"),
             fg_color="transparent")
         self.lbl_import_status.pack(side=tk.RIGHT, padx=(0,12))
@@ -1786,7 +1987,7 @@ class BOMToolApp(ctk.CTk):
         info_bar.pack_propagate(False)
         self.lbl_import_filename = CLabel(info_bar,
             text="📄  Chưa chọn file",
-            font=ctk.CTkFont(*FONT_SMALL),
+            font=ctk_font(*FONT_SMALL),
             text_color=("gray50","gray60"),
             fg_color="transparent", anchor="w")
         self.lbl_import_filename.pack(side=tk.LEFT, padx=PAD_MD, pady=3)
@@ -1807,7 +2008,7 @@ class BOMToolApp(ctk.CTk):
         else:
             CLabel(content_card,
                 text="⚠️  tksheet chưa được cài — không thể hiển thị preview.",
-                font=ctk.CTkFont(*FONT_BODY),
+                font=ctk_font(*FONT_BODY),
                 fg_color="transparent").pack(expand=True)
 
         # Empty state overlay — hiện khi chưa chọn file, bị che khi file đã load
@@ -2829,8 +3030,8 @@ class BOMToolApp(ctk.CTk):
         col_defs = getattr(self, '_catalog_current_col_defs', [])
         if not col_defs:
             return
-        data_font   = tkfont.Font(family="Segoe UI", size=10)
-        header_font = tkfont.Font(family="Segoe UI", size=10, weight="bold")
+        data_font   = tkfont.Font(family="Segoe UI", size=12)
+        header_font = tkfont.Font(family="Segoe UI", size=12, weight="bold")
         PAD   = 28    # khớp với BOM tab
         MAX_W = 300   # giới hạn tối đa
 
@@ -3787,7 +3988,7 @@ class BOMToolApp(ctk.CTk):
             dlg.clipboard_append(all_sql)
 
         CButton(hdr, text="📋 Copy All", command=_copy_all,
-                font=ctk.CTkFont(*FONT_SMALL),
+                font=ctk_font(*FONT_SMALL),
                 fg_color="#1E3A5F", hover_color=dt["btn_primary"],
                 text_color="#DBEAFE", height=28, corner_radius=5,
                 width=110).pack(side=_tk.RIGHT, padx=PAD_MD, pady=PAD_SM)
@@ -3800,7 +4001,7 @@ class BOMToolApp(ctk.CTk):
         hsb = _tk.Scrollbar(dlg, orient=_tk.HORIZONTAL)
         txt = _tk.Text(
             txt_frame,
-            font=("Consolas", 9),
+            font=("Consolas", 10),
             bg="#0D1117", fg="#E6EDF3",
             selectbackground="#264F78",
             insertbackground="#E6EDF3",
@@ -3817,7 +4018,7 @@ class BOMToolApp(ctk.CTk):
 
         txt.tag_configure("comment", foreground="#8B949E")
         txt.tag_configure("kw",      foreground="#FF7B72",
-                          font=("Consolas", 9, "bold"))
+                          font=("Consolas", 10, "bold"))
         txt.tag_configure("tbl",     foreground="#79C0FF")
         txt.tag_configure("val",     foreground="#A5D6FF")
         txt.tag_configure("col",     foreground="#D2A8FF")
@@ -3857,7 +4058,7 @@ class BOMToolApp(ctk.CTk):
 
         # ── Footer ────────────────────────────────────────────────────────────────
         CButton(dlg, text="Đóng", command=dlg.destroy,
-                font=ctk.CTkFont(*FONT_BODY_B),
+                font=ctk_font(*FONT_BODY_B),
                 height=32, corner_radius=6,
                 fg_color=("#3B82F6","#1D4ED8"),
                 hover_color=("#2563EB","#1E40AF"),
@@ -3885,7 +4086,7 @@ class BOMToolApp(ctk.CTk):
 
         def _chip(parent, text, fg, bg):
             ctk.CTkLabel(parent, text=text,
-                         font=ctk.CTkFont(*FONT_MD_B),
+                         font=ctk_font(*FONT_MD_B),
                          text_color=fg, fg_color=bg,
                          corner_radius=6, padx=10, pady=PAD_XS).pack(
                 side=tk.LEFT, padx=PAD_XS)
@@ -3937,7 +4138,7 @@ class BOMToolApp(ctk.CTk):
 
         # ── Close button ──────────────────────────────────────────────────────
         CButton(dlg, text="Đóng", command=dlg.destroy,
-                font=ctk.CTkFont(*FONT_BODY_B),
+                font=ctk_font(*FONT_BODY_B),
                 height=32, corner_radius=6,
                 fg_color=("#3B82F6","#1D4ED8"),
                 hover_color=("#2563EB","#1E40AF"),
@@ -3989,7 +4190,7 @@ class BOMToolApp(ctk.CTk):
 
         self.btn_thdm_load = ctk.CTkButton(bar, text="🔄  ① Tải dữ liệu",
             command=self._thdm_load_products,
-            font=ctk.CTkFont(*FONT_BODY_B),
+            font=ctk_font(*FONT_BODY_B),
             fg_color=("#EBEBEB", "#2D2D2D"),
             text_color=("#1A1A1A", "#E1E1E1"),
             hover_color=("#D8D8D8", "#3A3A3A"),
@@ -4002,13 +4203,13 @@ class BOMToolApp(ctk.CTk):
 
         # Dự án
         CLabel(bar, text="Dự án:",
-            font=ctk.CTkFont(*FONT_BODY),
+            font=ctk_font(*FONT_BODY),
             text_color=("gray40","gray65"),
             fg_color="transparent").pack(side=tk.LEFT, padx=(0,4))
         self.cmb_thdm_product = _SearchCombo(bar,
             values=["— Chọn dự án —"],
             width=230, height=32,
-            font=ctk.CTkFont(*FONT_BODY),
+            font=ctk_font(*FONT_BODY),
             command=self._thdm_on_product_change,
             placeholder="— Chọn dự án —")
         self.cmb_thdm_product.set("— Chọn dự án —")
@@ -4019,13 +4220,13 @@ class BOMToolApp(ctk.CTk):
 
         # Đơn hàng
         CLabel(bar, text="Đơn hàng:",
-            font=ctk.CTkFont(*FONT_BODY),
+            font=ctk_font(*FONT_BODY),
             text_color=("gray40","gray65"),
             fg_color="transparent").pack(side=tk.LEFT, padx=(0,4))
         self.cmb_thdm_order = _SearchCombo(bar,
             values=["— Chọn đơn hàng —"],
             width=240, height=32,
-            font=ctk.CTkFont(*FONT_BODY),
+            font=ctk_font(*FONT_BODY),
             command=self._thdm_on_order_change,
             placeholder="— Chọn đơn hàng —",
             state="disabled")
@@ -4036,13 +4237,13 @@ class BOMToolApp(ctk.CTk):
                      width=1, height=36).pack(side=tk.LEFT, padx=(0,8), pady=10)
 
         CLabel(bar, text="Nhân viên:",
-            font=ctk.CTkFont(*FONT_BODY),
+            font=ctk_font(*FONT_BODY),
             text_color=("gray40","gray65"),
             fg_color="transparent").pack(side=tk.LEFT, padx=(0,4))
         self.cmb_thdm_creator = _SearchCombo(bar,
             values=["— Đang tải... —"],
             width=200, height=32,
-            font=ctk.CTkFont(*FONT_BODY),
+            font=ctk_font(*FONT_BODY),
             command=self._on_thdm_creator_change,
             placeholder="— Chọn nhân viên —")
         self.cmb_thdm_creator.set("— Đang tải... —")
@@ -4052,13 +4253,13 @@ class BOMToolApp(ctk.CTk):
                      width=1, height=36).pack(side=tk.LEFT, padx=(0,8), pady=10)
 
         CLabel(bar, text="Đợt:",
-            font=ctk.CTkFont(*FONT_BODY),
+            font=ctk_font(*FONT_BODY),
             text_color=("gray40","gray65"),
             fg_color="transparent").pack(side=tk.LEFT, padx=(0,4))
         self.cmb_thdm_period = _SearchCombo(bar,
             values=["— Đang tải... —"],
             width=180, height=32,
-            font=ctk.CTkFont(*FONT_BODY),
+            font=ctk_font(*FONT_BODY),
             command=self._on_thdm_period_change,
             placeholder="— Chọn đợt —")
         self.cmb_thdm_period.set("— Đang tải... —")
@@ -4068,7 +4269,7 @@ class BOMToolApp(ctk.CTk):
                      width=1, height=36).pack(side=tk.LEFT, padx=(0,8), pady=10)
 
         self.lbl_thdm_status = CLabel(bar, text="—  Chưa tải",
-            font=ctk.CTkFont(*FONT_BODY),
+            font=ctk_font(*FONT_BODY),
             text_color=("gray40","gray55"),
             fg_color="transparent")
         self.lbl_thdm_status.pack(side=tk.LEFT)
@@ -4093,7 +4294,7 @@ class BOMToolApp(ctk.CTk):
         self.thdm_search_var = tk.StringVar()
         self.thdm_search_var.trace_add("write", lambda *_: self._thdm_filter_bom())
         ctk.CTkEntry(fe, textvariable=self.thdm_search_var,
-            font=ctk.CTkFont(*FONT_BODY),
+            font=ctk_font(*FONT_BODY),
             placeholder_text="🔍  Tìm BOM...",
             height=30, corner_radius=0, border_width=0,
             fg_color="transparent").pack(fill=tk.X, padx=6, pady=1)
@@ -4211,7 +4412,7 @@ class BOMToolApp(ctk.CTk):
 
         self.btn_thdm_sel_all = ctk.CTkButton(lb, text="☑ Tất cả",
             command=lambda: self._thdm_toggle_all(True),
-            font=ctk.CTkFont(*FONT_SMALL),
+            font=ctk_font(*FONT_SMALL),
             fg_color="transparent", border_width=1,
             text_color=("gray40","gray65"),
             border_color=("gray50","gray55"),
@@ -4221,7 +4422,7 @@ class BOMToolApp(ctk.CTk):
 
         self.btn_thdm_desel_all = ctk.CTkButton(lb, text="☐ Bỏ",
             command=lambda: self._thdm_toggle_all(False),
-            font=ctk.CTkFont(*FONT_SMALL),
+            font=ctk_font(*FONT_SMALL),
             fg_color="transparent", border_width=1,
             text_color=("gray40","gray65"),
             border_color=("gray50","gray55"),
@@ -4230,7 +4431,7 @@ class BOMToolApp(ctk.CTk):
         self.btn_thdm_desel_all.pack(side=tk.LEFT, padx=(0,6), pady=5)
 
         self.lbl_thdm_sel_count = CLabel(lb, text="0 BOM chọn",
-            font=ctk.CTkFont(*FONT_SMALL),
+            font=ctk_font(*FONT_SMALL),
             text_color=("gray40","gray55"),
             fg_color="transparent")
         self.lbl_thdm_sel_count.pack(side=tk.LEFT)
@@ -4238,7 +4439,7 @@ class BOMToolApp(ctk.CTk):
         # Xanh dương (hành động xử lý) — xanh lá dành riêng cho nút INSERT
         self.btn_thdm_aggregate = ctk.CTkButton(lb, text="📊  ③ Tổng hợp",
             command=self._thdm_aggregate,
-            font=ctk.CTkFont(*FONT_BODY_B),
+            font=ctk_font(*FONT_BODY_B),
             fg_color=("#0066CC", "#0066CC"),
             hover_color=("#0055AA", "#0055AA"),
             text_color="#FFFFFF",
@@ -4257,7 +4458,7 @@ class BOMToolApp(ctk.CTk):
 
         self.btn_thdm_pick_excel = ctk.CTkButton(fp, text="📂  ② Chọn file Excel THDM",
             command=self._thdm_pick_excel,
-            font=ctk.CTkFont(*FONT_BODY),
+            font=ctk_font(*FONT_BODY),
             fg_color="transparent", border_width=1,
             text_color=("gray40","gray65"),
             border_color=("gray50","gray55"),
@@ -4269,7 +4470,7 @@ class BOMToolApp(ctk.CTk):
                      width=1, height=24).pack(side=tk.LEFT, padx=(0,8), pady=9)
 
         self.lbl_thdm_excel_path = CLabel(fp, text="Chưa chọn file",
-            font=ctk.CTkFont(*FONT_SMALL),
+            font=ctk_font(*FONT_SMALL),
             text_color=("gray40","gray55"),
             fg_color="transparent")
         self.lbl_thdm_excel_path.pack(side=tk.LEFT)
@@ -4335,7 +4536,7 @@ class BOMToolApp(ctk.CTk):
             _fb,
             values=["Tất cả (0)", "⚠ Dòng lỗi (0)"],
             command=self._thdm_toggle_filter,
-            font=ctk.CTkFont(*FONT_BODY),
+            font=ctk_font(*FONT_BODY),
             height=26, corner_radius=6,
         )
         self._thdm_filter_seg.pack(side=tk.LEFT, padx=PAD_SM, pady=2)
@@ -4440,7 +4641,7 @@ class BOMToolApp(ctk.CTk):
         # muốn hiện lại chỉ cần thêm .pack(...) như 2 nút bên dưới.
         self.btn_thdm_export_xl = CButton(ab, text="📤  Xuất Excel",
             command=self._thdm_export_excel,
-            font=ctk.CTkFont(*FONT_MD),
+            font=ctk_font(*FONT_MD),
             fg_color="transparent", border_width=1,
             text_color=("gray50", "gray60"),
             border_color=("gray50", "gray55"),
@@ -4449,7 +4650,7 @@ class BOMToolApp(ctk.CTk):
 
         self.btn_thdm_view_sql = CButton(ab, text="📋  Xem SQL",
             command=self._thdm_view_sql,
-            font=ctk.CTkFont(*FONT_MD),
+            font=ctk_font(*FONT_MD),
             fg_color="transparent", border_width=1,
             text_color=("gray50", "gray60"),
             border_color=("gray50", "gray55"),
@@ -4458,7 +4659,7 @@ class BOMToolApp(ctk.CTk):
 
         self.btn_thdm_validate = CButton(ab, text="🔍  ④ Kiểm tra",
             command=self._thdm_validate,
-            font=ctk.CTkFont(*FONT_MD_B),
+            font=ctk_font(*FONT_MD_B),
             fg_color="transparent", border_width=1,
             text_color=("#3B82F6", "#60A5FA"),
             border_color=("#3B82F6", "#60A5FA"),
@@ -4476,7 +4677,7 @@ class BOMToolApp(ctk.CTk):
         # INSERT — Primary Blue, đồng nhất với nút Import bên tab BOM
         self.btn_thdm_insert = CButton(ab, text="💾  ⑤ Tạo THDM",
             command=self._thdm_insert_db,
-            font=ctk.CTkFont(*FONT_MD_B),
+            font=ctk_font(*FONT_MD_B),
             fg_color=("#0066CC", "#0066CC"),
             hover_color=("#0055AA", "#0055AA"),
             text_color="#FFFFFF",
@@ -4487,7 +4688,7 @@ class BOMToolApp(ctk.CTk):
         # Label kết quả tổng hợp/kiểm tra — đặt ở action bar dưới (đủ chỗ,
         # tránh tràn như khi để trên thanh lookup)
         self.lbl_thdm_result = CLabel(ab, text="",
-            font=ctk.CTkFont(*FONT_BODY),
+            font=ctk_font(*FONT_BODY),
             text_color=("gray40", "gray55"),
             fg_color="transparent")
         self.lbl_thdm_result.pack(side=tk.LEFT, padx=(10, 6))
@@ -4750,6 +4951,7 @@ class BOMToolApp(ctk.CTk):
         }
         self.cmb_creator.configure(values=display_list)
         self.cmb_creator.set("— Chọn nhân viên —")
+        self.cmb_creator.set_error(True)   # trường bắt buộc chưa chọn
         self._current_creator_user_id = None
         if hasattr(self, 'cmb_thdm_creator'):
             self.cmb_thdm_creator.configure(values=display_list)
@@ -4793,11 +4995,12 @@ class BOMToolApp(ctk.CTk):
         # tránh mất dấu nhân viên thật khi họ chưa được ráp UserList (bug đã gặp:
         # toàn bộ rơi về EmployeeId=1 vì CreatedBy fallback che mất người chọn).
         self._current_creator_employee_id = getattr(self, '_employee_id_map', {}).get(selected_name)
-        self._bom_layer2_done = False
         self.cmb_creator.set_error(False)
         # Sau khi chọn chỉ hiển thị Code (phần trước |)
         if selected_name and "|" in selected_name:
             self.cmb_creator.set(selected_name.split("|")[0].strip())
+        # Nhân viên không ảnh hưởng kết quả tra cứu DB → giữ layer2_done, chỉ cập nhật cổng Import
+        self._refresh_bom_gate()
 
     def _on_thdm_creator_change(self, selected_name):
         if selected_name and ("Lỗi" in selected_name or "Đang tải" in selected_name):
@@ -4953,16 +5156,27 @@ class BOMToolApp(ctk.CTk):
 
     def _load_bom_orders_worker(self):
         try:
+            # Nguồn: view vB30BizDocSO_ExploreFO — DocNo2 đã có sẵn hậu tố version (_REV01…).
+            # Các version của 1 đơn nối nhau qua BizDocId_FO (= BizDocId bản gốc) → chỉ giữ bản mới nhất.
+            # Không lọc theo IsLatest: cột này =1 cả với bản chưa duyệt và =0 với đơn 1 version.
             sql = """
-                SELECT BizDocId,
-                       ISNULL(CONCAT(DocNo2,'_',Version), DocNo)    AS DocNo2,
-                       CONVERT(varchar(10), DocDate, 103)           AS DocDate,
-                       ISNULL(Description, '')                      AS Descr
-                FROM   B30BizDocSO
-                WHERE  DocCode = 'FO'
-                  AND  IsActive  = 1
-                  AND  DocStatus = 4
-                ORDER  BY DocDate DESC, DocNo2
+                SELECT BizDocId, DocNo2, DocDate, Descr
+                FROM (
+                    SELECT BizDocId,
+                           COALESCE(NULLIF(DocNo2,''), DocNo)    AS DocNo2,
+                           CONVERT(varchar(10), DocDate, 103)    AS DocDate,
+                           ISNULL(Description, '')               AS Descr,
+                           DocDate                               AS _d,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY COALESCE(NULLIF(BizDocId_FO,''), BizDocId)
+                               ORDER BY DocDate DESC, DocNo DESC, BizDocId DESC) AS rn
+                    FROM   vB30BizDocSO_ExploreFO
+                    WHERE  DocCode   = 'FO'
+                      AND  IsActive  = 1
+                      AND  DocStatus = 4
+                ) t
+                WHERE rn = 1
+                ORDER BY _d DESC, DocNo2
             """
             conn = self._get_db_conn()
             cur  = conn.cursor()
@@ -4991,26 +5205,22 @@ class BOMToolApp(ctk.CTk):
         self._bom_selected_order_id = self._bom_order_map.get(selected)
         self._bom_layer2_done = False
         self.cmb_order.set_error(not bool(self._bom_selected_order_id))
-        if self.val_errors is not None:
-            n_err, _ = count_errors(self.val_errors)
-            has_creator = bool(self._current_creator_user_id)
-            _s = tk.NORMAL if n_err == 0 and self._bom_selected_order_id and has_creator else tk.DISABLED
-            self.btn_import.config(state=_s)
-            self.btn_view_sql.configure(state=_s)
         self._bom_selected_product_id = None
         if self._bom_selected_order_id:
             self._set_bom_project_display('⏳ …')
             self._load_bom_project_for_order(self._bom_selected_order_id)
         else:
             self._set_bom_project_display('')
+        # Đổi Đơn hàng → tra cứu DB phải làm lại; đủ điều kiện thì tự chạy (popup fuzzy hiện luôn)
+        self._refresh_bom_gate()
 
     def _set_bom_project_display(self, full_text):
         """Cập nhật ô Dự án (read-only, fixed width) — truncate nếu dài,
         Tooltip trên ent_bom_project sẽ hiện đầy đủ khi hover."""
         self._bom_project_full_text = full_text or ''
         disp = full_text.strip() if full_text else '—'
-        if len(disp) > 32:
-            disp = disp[:31] + '…'
+        if len(disp) > 60:
+            disp = disp[:59] + '…'
         self.ent_bom_project.configure(state="normal")
         self.ent_bom_project.delete(0, tk.END)
         self.ent_bom_project.insert(0, disp)
@@ -5051,21 +5261,13 @@ class BOMToolApp(ctk.CTk):
         self._set_bom_project_display(str(row[1] or ''))
 
     def _bom_try_auto_select_order(self):
-        """Khớp 'Đơn hàng' trong Excel header với dropdown.
-        - Khớp       -> auto-select
-        - Không khớp -> clear (buộc user chọn lại)
-        - Trống       -> clear
-        """
-        excel_val = str(self.global_meta.get("Đơn hàng", "") or "").strip()
-        if excel_val:
-            for disp, bid in self._bom_order_map.items():
-                if excel_val in disp or disp.startswith(excel_val):
-                    self.cmb_order.set(disp)
-                    self._bom_selected_order_id = bid
-                    return
-        # Không tìm thấy match hoặc Excel không có "Đơn hàng" -> clear
+        """Không còn tự khớp 'Đơn hàng' từ Excel header: tên trong Excel và Bravo
+        hay lệch nhau (vd DREAM CITY vs DRC) nên bắt buộc người dùng chọn tay.
+        Mỗi lần nạp file / tải danh sách -> xóa lựa chọn cũ, viền đỏ báo bắt buộc."""
         self.cmb_order.set("— Chọn đơn hàng —")
         self._bom_selected_order_id = None
+        self._set_bom_project_display('')   # Dự án suy ra từ Đơn hàng → xóa theo
+        self.cmb_order.set_error(True)   # trường bắt buộc chưa chọn
 
     def _thdm_on_order_change(self, value=None):
         selected = self.cmb_thdm_order.get()
@@ -5737,7 +5939,7 @@ class BOMToolApp(ctk.CTk):
 
         import tkinter.font as _tkf
         _hfont = _tkf.Font(family="Segoe UI", size=12, weight="bold")
-        _font  = _tkf.Font(family="Segoe UI", size=11)
+        _font  = _tkf.Font(family="Segoe UI", size=12)
         tr["columns"] = tuple(d['sql_col'] for d in defs)
         for d in defs:
             htxt = d['ten_excel'] or d['sql_col']
@@ -6775,7 +6977,7 @@ class BOMToolApp(ctk.CTk):
         dlg.geometry("900x580")
         dlg.grab_set()
         txt = tk.Text(dlg, bg=dt["bg_main"], fg="#D4D4D4",
-            font=("Consolas", 10), wrap="none",
+            font=("Consolas", 11), wrap="none",
             insertbackground="#D4D4D4")
         txt.pack(fill=tk.BOTH, expand=True, padx=PAD_SM, pady=PAD_SM)
         txt.insert("1.0", sql_text)
@@ -7200,13 +7402,13 @@ class BOMToolApp(ctk.CTk):
         hdr.grid_columnconfigure(1, weight=1)   # error label — fills remaining space
 
         ctk.CTkLabel(hdr, text="📋  Lịch sử Import",
-            font=ctk.CTkFont(*FONT_MD_B)).grid(
+            font=ctk_font(*FONT_MD_B)).grid(
             row=0, column=0, sticky="w")
 
         # Statusbar lỗi THDM — cập nhật bởi _thdm_on_row_select khi click dòng bảng
         self.lbl_thdm_err_bar = ctk.CTkLabel(
             hdr, text="",
-            font=ctk.CTkFont(*FONT_BODY),
+            font=ctk_font(*FONT_BODY),
             text_color=("#DC2626", "#FF6B6B"),
             anchor="w", fg_color="transparent")
         self.lbl_thdm_err_bar.grid(row=0, column=1, sticky="ew", padx=(12, 4))
@@ -7217,7 +7419,7 @@ class BOMToolApp(ctk.CTk):
             text_color=("#3B82F6","#007ACC"),
             border_color=("#3B82F6","#007ACC"),
             hover_color=("#DBEAFE","#1E3A5F"),
-            font=ctk.CTkFont(*FONT_MD),
+            font=ctk_font(*FONT_MD),
             width=90, height=24, corner_radius=6)
         self.btn_log_db.grid(row=0, column=2, padx=(4, 0))
         Tooltip(self.btn_log_db,
@@ -7228,7 +7430,7 @@ class BOMToolApp(ctk.CTk):
             fg_color="transparent", border_width=1,
             text_color="gray", border_color=("gray50","gray50"),
             hover_color=("gray90","gray25"),
-            font=ctk.CTkFont(*FONT_MD),
+            font=ctk_font(*FONT_MD),
             width=70, height=24, corner_radius=6).grid(
             row=0, column=3, padx=(4, 4))
         self.btn_log_toggle = ctk.CTkButton(hdr,
@@ -7238,7 +7440,7 @@ class BOMToolApp(ctk.CTk):
             text_color=("#3B82F6","#007ACC"),
             border_color=("#3B82F6","#007ACC"),
             hover_color=("#DBEAFE","#1E3A5F"),
-            font=ctk.CTkFont(*FONT_MD_B),
+            font=ctk_font(*FONT_MD_B),
             width=90, height=24, corner_radius=6)
         self.btn_log_toggle.grid(row=0, column=4)
 
@@ -7448,7 +7650,7 @@ class BOMToolApp(ctk.CTk):
                     def _warn(a=_att):
                         self._show_msg(
                             "Sai mật khẩu",
-                            f"Mật khẩu không đúng (lần {a}/3).\nVui lòng thử lại.",
+                            f"Sai mật khẩu (lần {a}/3).",
                             'warning')
                         event2.set()
                     self.after(0, _warn)
@@ -7486,7 +7688,7 @@ class BOMToolApp(ctk.CTk):
     # ─ Export validate report ────────────────────────────────────────────────────────────────────────────
     def _export_validate_report(self):
         if not self.val_errors:
-            self._show_msg("Chưa validate", "Hãy chạy Validate trước.", 'warning')
+            self._show_msg("Chưa kiểm tra", "Bấm Kiểm tra trước.", 'warning')
             return
 
         import openpyxl
@@ -7641,9 +7843,9 @@ class BOMToolApp(ctk.CTk):
                 errs = last_ok["val_errors"].get(name, [])
                 ne   = len([e for e in errs if e["severity"] == "error"])
                 nw   = len([e for e in errs if e["severity"] == "warning"])
-                icon = (" E" + str(ne)) if ne else ((" W" + str(nw)) if nw else " OK")
-                self.listbox.insert(tk.END, name + icon)
-            self.btn_report.config(state=tk.NORMAL)
+                self.listbox.insert(tk.END, name + self._table_badge(ne, nw))
+                self._tint_table_item(ne, nw)
+            self._refresh_error_list()
             _s = tk.NORMAL if n_err == 0 else tk.DISABLED
             self.btn_import.config(state=_s)
             self.btn_view_sql.configure(state=_s)
@@ -7677,6 +7879,8 @@ class BOMToolApp(ctk.CTk):
         tbl  = self.tables[table_name]
         df   = tbl["df"]
         errs = self.val_errors.get(table_name, [])
+        if hasattr(self, "lbl_hint"):
+            self.lbl_hint.configure(text="")
 
         n_rows = len(df)
         n_cols = len(df.columns)
@@ -7685,8 +7889,13 @@ class BOMToolApp(ctk.CTk):
             fg=self._text_fg)
 
         self.tree.delete(*self.tree.get_children())
+        if hasattr(self.tree, "clear_cell_marks"):
+            self.tree.clear_cell_marks()
+            self.tree.set_group_spans([])
         if df.empty or "Lỗi" in df.columns:
             self._update_warn_panel(errs, {}, [])
+            if hasattr(self.tree, "set_row_labels"):
+                self.tree.set_row_labels([])
             self.tree["columns"] = ("msg",)
             self.tree.heading("msg", text="Thông báo")
             self.tree.column("msg", width=600)
@@ -7700,23 +7909,33 @@ class BOMToolApp(ctk.CTk):
         import tkinter.font as tkfont
         _hfont = tkfont.Font(family="Segoe UI", size=12, weight="bold")
         _dfont = tkfont.Font(family="Segoe UI", size=12)
-        _PADDING = 28
-        _MIN_W   = 60
-        _MAX_W   = 300  # giới hạn tối đa tránh cột quá rộng
+        _PADDING = 20
+        _MIN_W   = 56
+        _MAX_W   = 330  # rộng hơn để ô dài gói trong ≤ 2 dòng (dòng không cao vô cớ)
+        _HDR_MAX = 120  # tiêu đề dài xuống dòng nên không quyết định độ rộng cột
 
         # Tính width từ heading + sample 60 dòng đầu dữ liệu
         col_w = {}
+        _ec_sql = self._excel_cell_columns(tbl.get("type", ""))
+        _hdr_disp = self._grouped_headings(cols, df.attrs.get("header_groups"))
+        for _c in cols:   # cột đọc theo tọa độ ô (vd Y3) → hiện tên nghiệp vụ "Số lượng (Y3)"
+            if _norm_vn(str(_c)) in _ec_sql:
+                _hdr_disp[_c] = _ec_sql[_norm_vn(str(_c))][1]
+        if hasattr(self.tree, "set_group_spans"):
+            self.tree.set_group_spans(self._group_spans(cols, df.attrs.get("header_groups")))
         for col in cols:
-            display = col.replace("_", " ")
+            display = _hdr_disp[col]
             _ca = guess_col_align(col)
+            if _ca == "e" or (_ca == "w" and pd.api.types.is_numeric_dtype(df[col])):
+                _ca = "center"   # số căn giữa: không bị cắt sát mép ô và thẳng hàng với tiêu đề
             self.tree.heading(col, text=display, anchor=_ca)
-            h_w = _hfont.measure(display) + _PADDING
+            h_w = max(_hfont.measure(_ln) for _ln in display.split("\n")) + _PADDING
             try:
-                sample = df[col].dropna().astype(str).head(60)
+                sample = df[col].dropna().map(self._fmt_cell).head(60)
                 d_w = int(sample.map(lambda s: _dfont.measure(s)).max()) + _PADDING if len(sample) else 0
             except Exception:
                 d_w = 0
-            col_w[col] = min(max(h_w, d_w, _MIN_W), _MAX_W)
+            col_w[col] = min(max(min(h_w, _HDR_MAX), d_w, _MIN_W), _MAX_W)
             self.tree.column(col, width=col_w[col], anchor=_ca, stretch=False)
 
         # ─ Hàng SQL column names (hàng đầu cố định) ──────────────────────────
@@ -7729,18 +7948,25 @@ class BOMToolApp(ctk.CTk):
                     sql_to_excel[_rec["sql_col"]] = _rec["ten_excel"]
             rev_map = build_reverse_map(self.mapping, section)
             for col in cols:
-                sql_col = match_col_to_sql(_norm_vn(col), rev_map)
+                sql_col = (match_col_to_sql(_norm_vn(col), rev_map)
+                           or _ec_sql.get(_norm_vn(str(col)), (None,))[0])
                 sql_row.append(sql_col if sql_col else "—")
-            # Mở rộng cột nếu tên SQL dài hơn nội dung đã tính
-            for col, sv in zip(cols, sql_row):
-                s_w = _dfont.measure(str(sv)) + _PADDING
-                if s_w > col_w[col]:
-                    col_w[col] = min(s_w, _MAX_W)
-                    self.tree.column(col, width=col_w[col])
-            self.tree.insert("", 0, values=sql_row, tags=("sql_names",))
-            # Ẩn cột chưa mapped (sql_row = "—") khỏi tree display
-            visible = [c for c, sv in zip(cols, sql_row) if sv != "—"]
-            self.tree["displaycolumns"] = visible if visible else cols
+            if self._SHOW_SQL_ROW:
+                # Mở rộng cột nếu tên SQL dài hơn nội dung đã tính
+                for col, sv in zip(cols, sql_row):
+                    s_w = _dfont.measure(str(sv)) + _PADDING
+                    if s_w > col_w[col]:
+                        col_w[col] = min(s_w, 150)
+                        self.tree.column(col, width=col_w[col])
+                self.tree.insert("", 0, values=sql_row, tags=("sql_names",))
+            # Ẩn các cột phụ phía sau cột mapped cuối cùng (cột lọc IN/PLDG, công thức tạm...)
+            # — không dùng khi import. Cột chưa mapped nằm xen giữa vẫn giữ để dễ đối chiếu.
+            _last_mapped = max((i for i, sv in enumerate(sql_row) if sv != "—"), default=-1)
+            self.tree["displaycolumns"] = cols[:_last_mapped + 1] if _last_mapped >= 0 else cols
+
+        _off = 1 if (self._SHOW_SQL_ROW and sql_row) else 0
+        self._bom_row_off = _off
+        _cell_marks_ok = hasattr(self.tree, "mark_cell")
 
         # ─ Data rows ───────────────────────────────────────────────────────────────────────────────────
         if hasattr(self, "_empty_frame"):
@@ -7778,89 +8004,204 @@ class BOMToolApp(ctk.CTk):
         self._warn_iid_to_tree_iid = {}
         tree_iids = []  # sẽ gán sau khi insert
 
+        _stt_c = next((c for c in cols if _norm_vn(str(c)) == "stt"), None)
+        group_rows = set()
+        if _stt_c is not None:
+            _gt = build_group_table(self.mapping, _norm_vn)
+            for _i, _v in enumerate(df[_stt_c]):
+                if not is_group_stt(_v):
+                    continue
+                # Nhóm con số La Mã (II = TỰA LƯNG, MODULE…) không tô; riêng chữ "I" của Phần IV
+                # (BAO BÌ) vẫn là nhóm thật → nhận ra qua tên nhóm trong bảng quy đổi
+                if is_roman_stt(_v) and resolve_group(
+                        section, df.iloc[_i].values, _gt, _norm_vn) is None:
+                    continue
+                group_rows.add(_i)
+
         for _idx, (_, row) in enumerate(df.iterrows()):
             vals = []
             for col, v in zip(cols, row):
-                s = str(v) if v is not None and not (isinstance(v, float) and pd.isna(v)) else ""
-                if _idx in error_cells and col in error_cells[_idx]:
-                    s = "⚠ " + s if s else "⚠ —"
-                elif _idx in warn_cells and col in warn_cells[_idx]:
-                    s = "△ " + s if s else "△ —"
-                vals.append(s)
-            if _idx in error_rows:
+                vals.append(self._fmt_cell(v))
+            # Ô lỗi được tô riêng (mark_cell) + ô nhãn cố định → không tô cả dòng cho đỡ rối.
+            # Chỉ tô cả dòng khi lỗi không gắn được với ô nào (hoặc lưới không hỗ trợ tô ô).
+            if _idx in error_rows and not (_cell_marks_ok and error_cells.get(_idx)):
                 row_tag = "err_row"
-            elif _idx in warn_rows:
+            elif _idx in warn_rows and _idx not in error_rows \
+                    and not (_cell_marks_ok and warn_cells.get(_idx)):
                 row_tag = "warn_row"
+            elif _idx in group_rows:
+                row_tag = "group_row"   # dòng tiêu đề nhóm (A, B, II…) — một màu nhấn chung
             else:
                 row_tag = "evenrow" if _idx % 2 == 0 else "oddrow"
             iid = self.tree.insert("", tk.END, values=vals, tags=(row_tag,))
             tree_iids.append((_idx, iid))
 
-        # Gán mapping warn_panel_iid → main tree iid (sau khi insert xong)
-        # _update_warn_panel đã lưu row_0based trong warn_tree items
-        for w_iid in self._warn_err_tree.get_children():
-            r0 = self._warn_err_tree.set(w_iid, "rownum")
-            # rownum được lưu dạng "Dòng N" — extract số
-            try:
-                r0_int = int(r0.replace("Dòng", "").strip()) - 1
-                matched_iid = next((iid for idx, iid in tree_iids if idx == r0_int), None)
-                if matched_iid:
-                    self._warn_iid_to_tree_iid[w_iid] = matched_iid
-            except (ValueError, StopIteration):
-                pass
+        # Tô riêng từng ô lỗi/cảnh báo (_off = số hàng phụ phía trên dữ liệu)
+        if _cell_marks_ok:
+            _cpos = {c: i for i, c in enumerate(cols)}
+            for _cells, _tag in ((warn_cells, "warn_cell"), (error_cells, "err_cell")):
+                for _r0, _cs in _cells.items():
+                    for _c in _cs:
+                        self.tree.mark_cell(_r0 + _off, _cpos[_c], _tag)
+
+        # Cột nhãn cố định bên trái bị bỏ: lặp lại STT/Tên chi tiết, làm lệch cột và khó nhìn
+        if hasattr(self.tree, "set_row_labels"):
+            self.tree.set_row_labels([])
 
     # ─ Warning panel helpers ──────────────────────────────────────────────────────────────────────────────
 
+    @staticmethod
+    def _fmt_cell(v):
+        """Chuỗi hiển thị của 1 ô: 2.0 → '2', 0.09497446 → '0.095', None/NaN → ''."""
+        if v is None:
+            return ""
+        if isinstance(v, float):
+            if pd.isna(v):
+                return ""
+            if v == int(v) and abs(v) < 1e15:
+                return str(int(v))
+            if abs(v) < 0.0001:
+                return f"{v:.6g}"
+            return f"{v:.4f}".rstrip("0").rstrip(".")
+        return str(v)
+
+    @staticmethod
+    def _table_badge(n_err, n_warn):
+        """Hậu tố tên bảng ở thanh bên (bắt đầu bằng khoảng trắng — _on_select dựa vào đó)."""
+        if n_err:
+            return f"  ·  {n_err} lỗi"
+        if n_warn:
+            return f"  ·  {n_warn} cảnh báo"
+        return "  ✓"
+
+    def _tint_table_item(self, n_err, n_warn):
+        dt = THEMES[ctk.get_appearance_mode()]
+        if n_err or n_warn:
+            self.listbox.itemconfig(
+                tk.END, fg=dt["badge_err_fg"] if n_err else dt["badge_warn_fg"])
+
+    def _excel_cell_columns(self, section):
+        """{tên cột chuẩn hóa → (cột SQL, nhãn hiển thị)} cho các field đọc theo tọa độ ô
+        (Nguon_DL=ExcelCell, Ten_Excel dạng 'Y3|Số lượng' → cột 'Y3', nhãn 'Số lượng (Y3)')."""
+        out = {}
+        for rec in self.mapping.get(section, []):
+            ten = rec.get("ten_excel", "")
+            if rec.get("nguon_dl") == "ExcelCell" and rec.get("sql_col") and "|" in ten:
+                cell, label = (p.strip() for p in ten.split("|", 1))
+                out[_norm_vn(cell)] = (rec["sql_col"], f"{label} ({cell})")
+        return out
+
+    @staticmethod
+    def _grouped_headings(cols, groups=None):
+        """Tên hiển thị tiêu đề cột. Cột thuộc nhóm header merge ngang (parser ghi vào
+        df.attrs['header_groups'], vd 'Qui Cách Tinh Chế' + DÀY/RỘNG/DÀI) hiện nhóm ở dòng
+        trên (chỉ ở cột đầu nhóm) và tên riêng ở dòng dưới. Chỉ đổi hiển thị, không đổi df."""
+        groups = groups or {}
+        disp = {c: str(c).replace("_", " ") for c in cols}
+        prev_group = None
+        for c in cols:
+            g = groups.get(c)
+            if not g:
+                prev_group = None
+                continue
+            group, sub = g
+            disp[c] = sub   # nhóm vẽ ở dải riêng phía trên (xem _group_spans)
+            prev_group = group
+        return disp
+
+    @staticmethod
+    def _group_spans(cols, groups):
+        """[(cột_đầu, cột_cuối, nhóm)] cho các cột liền kề cùng nhóm header merge."""
+        spans, groups = [], groups or {}
+        for i, c in enumerate(cols):
+            g = groups.get(c)
+            if not g:
+                continue
+            if spans and spans[-1][1] == i - 1 and spans[-1][2] == g[0]:
+                spans[-1] = (spans[-1][0], i, g[0])
+            else:
+                spans.append((i, i, g[0]))
+        return spans
+
     def _update_warn_panel(self, errs, error_cells, cols):
-        """Populate warning panel từ danh sách errs sau khi _show_table xong."""
+        """Panel lỗi cũ phía trên bảng đã thay bằng danh sách lỗi ở sidebar
+        (_refresh_error_list) — chỉ giữ để luồng cũ gọi không lỗi."""
         self._warn_err_tree.delete(*self._warn_err_tree.get_children())
         self._warn_iid_to_tree_iid = {}
+        self._warn_outer.grid_remove()
 
-        err_list  = [e for e in errs if e.get("severity") == "error"   and isinstance(e.get("row"), int)]
-        warn_list = [e for e in errs if e.get("severity") == "warning" and isinstance(e.get("row"), int)]
-        # Thêm các lỗi không có row (header-level)
-        hdr_errs  = [e for e in errs if e.get("severity") == "error"   and not isinstance(e.get("row"), int)]
+    # ── Danh sách lỗi ở sidebar: bấm → nhảy tới ô lỗi ───────────────────────
+    def _err_col_index(self, table_name, err):
+        """Chỉ số cột (trong df) của ô lỗi; None nếu lỗi không gắn với cột nào."""
+        tbl = self.tables.get(table_name)
+        if not tbl:
+            return None
+        cols = list(tbl["df"].columns)
+        sql_col = err.get("col", "")
+        sql_to_excel = {r["sql_col"]: r["ten_excel"]
+                        for r in self.mapping.get(tbl.get("type", ""), [])
+                        if r.get("sql_col") and r.get("ten_excel")}
+        excel_col = sql_to_excel.get(sql_col, sql_col)
+        return next((i for i, c in enumerate(cols)
+                     if c == excel_col or _norm_vn(c) == _norm_vn(excel_col)), None)
 
-        n_err  = len(err_list) + len(hdr_errs)
-        n_warn = len(warn_list)
+    def _refresh_error_list(self):
+        """Dựng lại danh sách lỗi từ self.val_errors (mọi bảng): lỗi trước, cảnh báo sau."""
+        dt = THEMES[ctk.get_appearance_mode()]
+        self.err_listbox.delete(0, tk.END)
+        self._err_items = []
+        self._err_detail.config(text="")
+        items = []
+        for label, errs in (self.val_errors or {}).items():
+            for e in errs:
+                items.append(dict(table=label, row=e.get("row"), col=e.get("col", ""),
+                                  severity=e.get("severity", "error"),
+                                  message=e.get("message", "")))
+        items.sort(key=lambda i: i["severity"] != "error")   # sort ổn định: giữ thứ tự bảng/dòng
+        for it in items:
+            short = "Đầu phiếu" if it["table"].startswith("[H]") else it["table"].replace("BOM ", "")
+            where = f"dòng {it['row']}" if isinstance(it["row"], int) else str(it["row"])
+            _col = str(it['col']).replace('_', ' ')
+            self.err_listbox.insert(tk.END, f"{'✖' if it['severity'] == 'error' else '▲'} {short} · {where} · {_col}")
+            self.err_listbox.itemconfig(
+                tk.END, fg=dt["badge_err_fg"] if it["severity"] == "error" else dt["badge_warn_fg"])
+            self._err_items.append(it)
+        n_e = sum(1 for i in items if i["severity"] == "error")
+        n_w = len(items) - n_e
+        self._err_title.config(
+            text=(f"{n_e} LỖI  ·  {n_w} CẢNH BÁO" if items else "DANH SÁCH LỖI"))
 
-        if n_err == 0 and n_warn == 0:
-            self._warn_outer.grid_remove()
+    def _on_err_list_click(self, _event=None):
+        sel = self.err_listbox.curselection()
+        if not sel or sel[0] >= len(self._err_items):
             return
+        it = self._err_items[sel[0]]
+        self._err_detail.config(text=it["message"])
+        names = list(self.tables)
+        if it["table"] not in names:
+            return
+        self.listbox.selection_clear(0, tk.END)
+        self.listbox.selection_set(names.index(it["table"]))
+        self._on_select(None)
+        if not isinstance(it["row"], int):
+            return   # lỗi cấp Header/thiếu cột — chỉ mở bảng, không có ô cụ thể
+        col = self._err_col_index(it["table"], it)
+        r_sheet, c_sheet = it["row"] - 1 + self._bom_row_off, (col if col is not None else 0)
+        self.tree._flush()
 
-        # Hiển thị panel (grid_remove giữ cấu hình, grid() khôi phục)
-        self._warn_outer.grid()
-
-        badge_txt = (str(n_err) + " lỗi") + (" / " + str(n_warn) + " cảnh báo" if n_warn else "")
-        self._warn_badge.config(text=badge_txt)
-
-        first_msg = (err_list or hdr_errs or warn_list)[0].get("message", "")
-        if len(first_msg) > 80:
-            first_msg = first_msg[:77] + "..."
-        extra = (n_err + n_warn - 1)
-        suffix = ("  +" + str(extra) + " mục khác") if extra > 0 else ""
-        self._warn_hdr_lbl.config(text=first_msg + suffix)
-
-        # Điền danh sách lỗi vào warn_tree
-        all_items = [(e, "err_item") for e in hdr_errs + err_list] + \
-                    [(e, "warn_item") for e in warn_list]
-        for e, tag in all_items:
-            r = e.get("row")
-            row_disp  = ("Dòng " + str(r)) if isinstance(r, int) else "Header"
-            field_disp = e.get("col", "")
-            msg_disp   = e.get("message", "")
-            self._warn_err_tree.insert("", tk.END,
-                values=(row_disp, field_disp, msg_disp), tags=(tag,))
-
-        # Số dòng hiển thị: tối đa 5, tối thiểu 2
-        n_items = len(all_items)
-        self._warn_err_tree.config(height=min(max(n_items, 2), 5))
-
-        # Đảm bảo list hiển thị theo trạng thái toggle
-        if self._warn_expanded:
-            self._warn_list_outer.pack(fill=tk.X)
-        else:
-            self._warn_list_outer.pack_forget()
+        def _go():
+            # Sau khi lưới vẽ xong (bề rộng cột/vùng cuộn đã cập nhật) mới cuộn — cuộn sớm thì
+            # tksheet tính theo vùng cuộn cũ và dừng lệch cột.
+            try:
+                sh = self.tree.sheet
+                sh.deselect("all")
+                sh.select_cell(r_sheet, c_sheet)
+                sh.see(r_sheet, c_sheet, check_cell_visibility=False)
+            except Exception:
+                pass
+        self.tree.sheet.update_idletasks()
+        _go()
+        self.after(120, _go)
 
     def _toggle_warn_panel(self):
         """Thu gọn / mở rộng phần danh sách lỗi."""
@@ -7892,7 +8233,7 @@ class BOMToolApp(ctk.CTk):
         if not path:
             return
 
-        self._set_status("Đang bóc tách dữ liệu...", C["yellow"])
+        self._set_status("Đang đọc file…", C["yellow"])
         self.btn_open.config(state=tk.DISABLED)
         self.val_errors = {}
         self._bom_layer2_done = False
@@ -7919,11 +8260,11 @@ class BOMToolApp(ctk.CTk):
                 self._current_file = path
                 self.after(0, lambda: self._on_parsed(skipped, warns))
             except PermissionError:
-                msg = "File đang được mở bởi ứng dụng khác (Excel?).\nĐóng file lại rồi thử lại."
+                msg = "File đang mở trong Excel. Đóng rồi thử lại."
                 self.after(0, lambda m=msg: self._show_msg("Không thể đọc file", m, 'error'))
-                self.after(0, lambda: self._set_status("Lỗi: file đang bị khóa", C["red"]))
+                self.after(0, lambda: self._set_status("File đang bị khóa", C["red"]))
             except Exception as ex:
-                msg = str(ex)
+                msg = f"Không đọc được file: {ex}"
                 self.after(0, lambda m=msg: self._show_msg("Lỗi đọc file", m, 'error'))
                 self.after(0, lambda: self._set_status("Lỗi đọc file", C["red"]))
             finally:
@@ -7935,7 +8276,7 @@ class BOMToolApp(ctk.CTk):
         fname = os.path.basename(self._current_file)
         if skipped:
             self._skipped_sheets = skipped
-            skip_info = f"  |  Bỏ qua: {len(skipped)} sheet"
+            skip_info = f"  ·  bỏ qua {len(skipped)} sheet"
         else:
             self._skipped_sheets = []
             skip_info = ""
@@ -7949,20 +8290,201 @@ class BOMToolApp(ctk.CTk):
         self.listbox.delete(0, tk.END)
         for name in self.tables:
             self.listbox.insert(tk.END, name)
+        self.listbox.config(height=max(5, len(self.tables)))
 
         self.btn_validate.config(state=tk.NORMAL)
         self.btn_import.config(state=tk.DISABLED)
         self.btn_view_sql.configure(state="disabled")
-        self.btn_report.config(state=tk.DISABLED)
+        self._refresh_error_list()
+        self._bom_dirty = False
+        self._validate_attention(False)
         self._bom_try_auto_select_order()
 
         if self.tables:
             self.listbox.selection_set(0)
             self._on_select(None)
+            # Bước 1 = Chọn file: tự Kiểm tra ngay sau khi nạp
+            self._run_validate(auto=True)
 
-    def _run_validate(self):
+    def _reset_form(self):
+        """Đưa tab BOM về trạng thái mới mở: bỏ file, bảng, lỗi, Nhân viên, Đơn hàng."""
+        if getattr(self, '_import_running', False):
+            return
+        if (self.tables or self._bom_selected_order_id or self._current_creator_user_id) and \
+                not self._ask_msg("Làm mới", "Xóa file và lựa chọn hiện tại?"):
+            return
+        self.tables, self.global_meta, self.val_errors = {}, {}, {}
+        self._current_file = ""
+        self._skipped_sheets = []
+        self._fuzzy_resolutions = {}
+        self._fuzzy_batch_done = False
+        self._bom_layer2_done = False
+        self._bom_dirty = False
+        self._validate_attention(False)
+
+        self._current_creator_user_id = None
+        self._current_creator_employee_id = None
+        self.cmb_creator.set("— Chọn nhân viên —")
+        self.cmb_creator.set_error(True)
+        self._bom_try_auto_select_order()   # xóa Đơn hàng + Dự án, viền đỏ
+
+        self.listbox.delete(0, tk.END)
+        self.tree.delete(*self.tree.get_children())
+        self._refresh_error_list()
+        if hasattr(self.tree, "set_group_spans"):
+            self.tree.set_group_spans([])
+        self.tree["columns"] = ()
+        self.lbl_table.config(text="— Chưa có dữ liệu —", fg=self._text_fg)
+        self._warn_outer.grid_remove()
+        self._empty_frame.place(x=0, y=0, relwidth=1, relheight=1)
+        self._empty_frame.lift()
+
+        for _b in (self.btn_validate, self.btn_import):
+            _b.config(state=tk.DISABLED)
+        self.btn_view_sql.configure(state="disabled")
+        self._set_status("Đã làm mới — chọn file Excel để bắt đầu", C["yellow"])
+
+    # ── Sửa dữ liệu trên lưới → bắt buộc Kiểm tra lại ───────────────────────
+    def _bom_selected_table(self):
+        """(tên bảng, df) đang hiển thị trên lưới; None nếu không có dữ liệu sửa được."""
+        sel = self.listbox.curselection()
+        if not sel:
+            return None
+        raw = self.listbox.get(sel[0])
+        name = next((k for k in self.tables if raw == k or raw.startswith(k + ' ')), None)
+        if not name:
+            return None
+        df = self.tables[name]["df"]
+        return None if df.empty or "Lỗi" in df.columns else (name, df)
+
+    def _bom_write_cell(self, df, vis_row, col_idx, new_val):
+        """Ghi 1 ô trên lưới (hàng 0 là hàng tên SQL) ngược vào df. True nếu ghi được."""
+        r = vis_row - self._bom_row_off
+        if r < 0 or r >= len(df) or col_idx >= len(df.columns):
+            return False
+        val = str(new_val if new_val is not None else "").strip()
+        if val == self._fmt_cell(df.iat[r, col_idx]).strip():
+            return False   # mở ô rồi Enter mà không đổi gì → không coi là chỉnh sửa (giữ nguyên số gốc)
+        for _mark in ("⚠", "△"):   # tiền tố đánh dấu ô lỗi/cảnh báo, không thuộc dữ liệu
+            if val.startswith(_mark):
+                val = val[1:].strip()
+        if val in ("—", ""):
+            val = None
+        elif re.fullmatch(r"-?\d+", val):
+            val = int(val)
+        elif re.fullmatch(r"-?\d+[.,]\d+", val):
+            val = float(val.replace(",", "."))
+        try:
+            df.isetitem(col_idx, df.iloc[:, col_idx].astype(object))
+            df.iat[r, col_idx] = val
+        except Exception as ex:
+            logging.getLogger(__name__).warning("Không ghi được ô BOM vào df: %s", ex)
+            return False
+        return True
+
+    _UNIT_HINT = "Đvt đặc biệt:  BB = Bao bì (IsBB = 1)  ·  CỤM = BTP"
+
+    def _update_unit_hint(self, row, col):
+        """Chọn ô thuộc cột Đvt của Phần II → hiện ghi chú BB / CỤM; ô đang chọn là BB hoặc CỤM
+        thì nói rõ nghĩa của nó. Chọn chỗ khác → xóa ghi chú."""
+        hint = ""
+        cur = self._bom_selected_table()
+        if cur:
+            name, df = cur
+            if (self.tables[name].get("type") == "BOM2" and 0 <= col < len(df.columns)
+                    and _norm_vn(str(df.columns[col])) == "dvt"):
+                hint = self._UNIT_HINT
+                r = row - self._bom_row_off
+                if 0 <= r < len(df):
+                    meaning = {"bb": "Bao bì", "cum": "BTP (bán thành phẩm)"}.get(
+                        _norm_vn(self._fmt_cell(df.iat[r, col])))
+                    if meaning:
+                        hint += f"     →  ô này: {meaning}"
+        self.lbl_hint.configure(text=hint)
+
+    def _on_bom_cell_select(self, event):
+        try:
+            sel = event.selected
+            row, col = sel.row, sel.column
+        except (AttributeError, TypeError):
+            return
+        if col is None:
+            return
+        self._update_unit_hint(row if row is not None else -1, col)
+
+    def _on_bom_cell_edited(self, event):
+        """Ghi ô vừa sửa ngược vào df rồi khóa Import cho tới khi bấm Kiểm tra lại."""
+        try:
+            vis_row, col_idx, new_val = event.row, event.column, event.value
+        except (AttributeError, TypeError):
+            return
+        cur = self._bom_selected_table()
+        if cur and self._bom_write_cell(cur[1], vis_row, col_idx, new_val):
+            self._bom_mark_dirty()
+            self._update_unit_hint(vis_row, col_idx)
+
+    def _on_bom_paste(self, event):
+        """Ctrl+V: tksheet đã dán xong vào lưới → đọc giá trị mới của từng ô dán rồi ghi vào df."""
+        try:
+            cells = event.get("cells", {}).get("table", {})
+        except (AttributeError, TypeError):
+            return
+        cur = self._bom_selected_table()
+        if not cur or not cells:
+            return
+        sheet, changed = self.tree.sheet, False
+        for (r, c) in cells:   # cells giữ giá trị CŨ (để undo); giá trị mới đọc từ lưới
+            changed |= self._bom_write_cell(cur[1], r, c, sheet.get_cell_data(r, c))
+        if changed:
+            self._bom_mark_dirty()
+
+    def _bom_mark_dirty(self):
+        if self._bom_dirty:
+            return
+        self._bom_dirty = True
+        self._bom_layer2_done = False
+        self.btn_import.config(state=tk.DISABLED)
+        self.btn_view_sql.configure(state="disabled")
+        self._set_status("⚠  Đã sửa — bấm Kiểm tra lại", C["red"])
+        self._err_title.config(text="ĐÃ SỬA — KIỂM TRA LẠI")
+        self._validate_attention(True)
+        self._toast("Đã sửa — bấm Kiểm tra lại.",
+                    duration=4500, kind="warning")
+
+    def _validate_attention(self, on):
+        """Nút Kiểm tra lại nổi màu cảnh báo khi dữ liệu đã sửa mà chưa kiểm tra lại."""
+        if on:
+            self.btn_validate.config(text="⚠  Kiểm tra lại", state=tk.NORMAL,
+                fg_color=("#F59E0B", "#B45309"), hover_color=("#D98706", "#92400E"),
+                text_color=("#1A1A1A", "#FFFFFF"), border_color=("#D98706", "#F59E0B"))
+        else:
+            self.btn_validate.config(text="🔍  Kiểm tra lại",
+                fg_color=("#EBEBEB", "#2D2D2D"), hover_color=("#D8D8D8", "#3A3A3A"),
+                text_color=("#1A1A1A", "#E1E1E1"), border_color=("#CCCCCC", "#3C3C3C"))
+
+    def _refresh_bom_gate(self):
+        """Điều kiện bật Import: dữ liệu sạch + chưa sửa dở + đã chọn Nhân viên & Đơn hàng.
+        Đủ điều kiện mà chưa tra cứu DB → tự chạy Layer 2 (popup fuzzy hiện ở đây, không đợi Import)."""
+        ready = (bool(self.tables) and self.val_errors is not None and not self._bom_dirty
+                 and count_errors(self.val_errors)[0] == 0)
+        if not (ready and self._bom_selected_order_id and self._current_creator_user_id):
+            self.btn_import.config(state=tk.DISABLED)
+            self.btn_view_sql.configure(state="disabled")
+            return
+        if self._bom_layer2_done:
+            self.btn_import.config(state=tk.NORMAL)
+            self.btn_view_sql.configure(state="normal")
+        elif not self._bom_prescan_running:
+            self.btn_import.config(state=tk.DISABLED)
+            self.btn_view_sql.configure(state="disabled")
+            self._set_status("⏳  Đang tra cứu DB...", C["yellow"])
+            self._run_layer2_prescan(n_wrn=count_errors(self.val_errors)[1], silent=True)
+
+    def _run_validate(self, auto=False):
         if not self.tables:
             return
+        self._bom_dirty = False
+        self._validate_attention(False)
         self.mapping = load_mapping()   # reload mỗi lần validate
         self.val_errors = validate_layer1(self.tables, self.global_meta, self.mapping)
         n_err, n_wrn    = count_errors(self.val_errors)
@@ -7973,19 +8495,19 @@ class BOMToolApp(ctk.CTk):
             errs = self.val_errors.get(name, [])
             ne   = len([e for e in errs if e["severity"] == "error"])
             nw   = len([e for e in errs if e["severity"] == "warning"])
-            icon = (" E" + str(ne)) if ne else ((" W" + str(nw)) if nw else " OK")
-            self.listbox.insert(tk.END, name + icon)
+            self.listbox.insert(tk.END, name + self._table_badge(ne, nw))
+            self._tint_table_item(ne, nw)
 
         if sel:
             self.listbox.selection_set(sel[0])
         self._on_select(None)
 
         fname = os.path.basename(self._current_file)
-        self.btn_report.config(state=tk.NORMAL)
+        self._refresh_error_list()
 
         # Bat ky sheet nao co loi deu chan Import
         header_errs = len([
-            e for e in self.val_errors.get("[H] Phiếu Header", [])
+            e for e in self.val_errors.get("[H] Đầu phiếu", [])
             if e.get("severity") == "error"
         ])
 
@@ -8000,44 +8522,60 @@ class BOMToolApp(ctk.CTk):
             if has_order and has_creator:
                 # Trigger Layer 2 DB pre-scan → fuzzy dialog → enable Import
                 self._set_status("⏳  Đang tra cứu DB...", C["yellow"])
-                self._run_layer2_prescan(n_wrn=n_wrn)
+                self._run_layer2_prescan(n_wrn=n_wrn, silent=auto)
             else:
-                self._set_status("Validate OK — chọn Đơn hàng & Nhân viên để Import", C["yellow"])
-                self._show_msg("Validate",
-                    "Dữ liệu hợp lệ!\n" + str(n_wrn) + " cảnh báo (không chặn import)\n\n"
-                    "Vui lòng chọn Đơn hàng và Nhân viên để Import.", 'info')
+                self._set_status("✅  Dữ liệu hợp lệ — chọn Nhân viên & Đơn hàng để Import", C["yellow"])
+                if not auto:   # tự kiểm tra sau khi nạp file thì không bật popup
+                    self._show_msg("Kiểm tra",
+                        "Dữ liệu hợp lệ. Chọn Nhân viên và Đơn hàng để Import.", 'info')
         else:
             self.btn_import.config(state=tk.DISABLED)
             self.btn_view_sql.configure(state="disabled")
-            self._set_status(str(n_err) + " lỗi  |  " + str(n_wrn) + " cảnh báo", C["red"])
+            self._set_status(str(n_err) + " lỗi  ·  " + str(n_wrn) + " cảnh báo", C["red"])
             self._log(fname, "Validate", "—", str(n_err) + " loi",
                       str(n_err) + " loi, " + str(n_wrn) + " canh bao", "err")
-            if header_errs > 0:
-                self._show_msg("Validate",
-                    "HEADER có " + str(header_errs) + " lỗi — cần sửa trước khi import.\n\n"
-                    "Tổng: " + str(n_err) + " lỗi / " + str(n_wrn) + " cảnh báo.\n\n"
-                    "Vui lòng mở file Excel gốc, sửa các dòng bị đánh dấu đỏ,\n"
-                    "lưu lại và thực hiện lại từ Bước 1.", 'warning')
-            else:
-                sub_errs = n_err - header_errs
-                self._show_msg("Validate",
-                    "Header OK — nhưng có " + str(sub_errs) + " lỗi dữ liệu ở BOM sheets.\n\n"
-                    "Import bị khóa cho đến khi sửa hết lỗi.\n\n"
-                    "Vui lòng mở file Excel gốc, sửa các dòng bị đánh dấu đỏ,\n"
-                    "lưu lại và thực hiện lại từ Bước 1.", 'warning')
+            _where = f"Đầu phiếu có {header_errs} lỗi" if header_errs > 0 else f"Có {n_err} lỗi"
+            self._show_msg("Kiểm tra",
+                _where + " (xem danh sách lỗi bên trái).\nSửa xong bấm Kiểm tra lại.", 'warning')
+
+    _MKT_WARN_MARK = "dùng mã tạm"
+
+    def _apply_mkt_warnings(self):
+        """Thêm cảnh báo (không chặn Import) cho các dòng không tra được mã theo Tên vật tư —
+        khi Import sẽ nhận mã tạm MKT của nhóm. Gỡ cảnh báo cũ trước để không trùng. Trả về số dòng."""
+        for label in self.tables:
+            errs = self.val_errors.get(label, [])
+            self.val_errors[label] = [e for e in errs if self._MKT_WARN_MARK not in e.get("message", "")]
+        n = 0
+        for (sec, row), (grp, code, vt_col) in sorted(getattr(self, "_mkt_use", {}).items()):
+            label = next((l for l, tb in self.tables.items() if tb.get("type") == sec), None)
+            if label is None:
+                continue
+            self.val_errors.setdefault(label, []).append({
+                "row": row, "col": vt_col or "",
+                "message": f"Không tra được mã — {self._MKT_WARN_MARK} {code}",
+                "severity": "warning"})
+            n += 1
+        if n:
+            self._refresh_error_list()
+            self._on_select(None)
+        return n
 
     # ── Layer 2 BOM pre-scan (tại Kiểm tra) ──────────────────────────────────
-    def _run_layer2_prescan(self, n_wrn: int = 0):
+    def _run_layer2_prescan(self, n_wrn: int = 0, silent: bool = False):
         """
         Chạy DB pre-scan ngay tại Kiểm tra (không chờ đến Import).
         Giống THDM step ④: thu thập fuzzy → hiện batch dialog → lưu resolutions.
         Sau khi xong: enable Import + set _bom_layer2_done=True.
         """
         self._bom_layer2_done   = False
+        self._bom_prescan_running = True
+        _ps_order = self._bom_selected_order_id   # đổi Đơn hàng giữa chừng → kết quả cũ không còn đúng
         self._fuzzy_collect_mode = True
         self._fuzzy_pending      = []
         self._fuzzy_ctx          = {}
         self._ps_bom_caches      = {}
+        self._mkt_use            = {}   # {(section, số dòng): (tên nhóm, mã tạm, cột tên vật tư)}
 
         dlg = self._make_loading_popup("⏳  Đang tra cứu DB...\nVui lòng chờ.", grab=False)
         fname = os.path.basename(self._current_file)
@@ -8047,9 +8585,10 @@ class BOMToolApp(ctk.CTk):
         except Exception as e:
             try: dlg.destroy()
             except Exception: pass
+            self._bom_prescan_running = False
             self._fuzzy_collect_mode = False
             self._set_status("❌  Không kết nối được DB", C["red"])
-            self._show_msg("Lỗi kết nối DB", str(e), 'error')
+            self._show_msg("Lỗi kết nối DB", f"Không kết nối được DB. Kiểm tra mạng/VPN.\n{e}", 'error')
             return
 
         def _worker():
@@ -8103,14 +8642,31 @@ class BOMToolApp(ctk.CTk):
                     self._ps_bom_caches[_sec] = _dcaches
                     _stt_col = next((c for c in _df.columns if _norm_vn(str(c)) == 'stt'), None)
                     _PLACEHOLDER_VALS_PS = {'_', '--', '-', 'x', 'n/a'}
+                    _ps_groups = build_group_table(self.mapping, _norm_vn)
+                    _ps_cur_group = None
+                    _ps_vt_col  = find_col(_df.columns, _norm_vn, 'Tên vật tư')
+                    _ps_dvt_col = find_col(_df.columns, _norm_vn, 'Đvt')
                     _order = 0
-                    for _, _drow in _df.iterrows():
+                    for _rowno, (_, _drow) in enumerate(_df.iterrows(), 1):
                         if _drow.isna().all():
                             continue
                         _stt_v = str(_drow.get(_stt_col, '') or '').strip() if _stt_col else ''
+                        if _stt_v in ('nan', 'None'):   # ô trống (NaN/None) — không phải STT chữ
+                            _stt_v = ''
                         if _stt_v and SECTION_STT_PATTERN.match(_stt_v):
+                            if _ps_groups.get(_sec):
+                                _g = resolve_group(_sec, _drow.values, _ps_groups, _norm_vn)
+                                if _g is not None:
+                                    _ps_cur_group = _g
                             continue
                         _order += 1
+                        # Dòng BTP (BOM2: Tên vật tư trống/'+' và Đvt CỤM) không tra theo Tên vật tư
+                        _row_btp = bool(
+                            NUMERIC_STT_PATTERN.match(_stt_v)
+                            and row_is_btp(_sec,
+                                           _drow.get(_ps_vt_col) if _ps_vt_col is not None else None,
+                                           _drow.get(_ps_dvt_col) if _ps_dvt_col is not None else None,
+                                           _norm_vn))
                         for _rec in _fuzzy_recs:
                             _ten    = _nan_str(_rec.get('ten_excel', ''))
                             _kl     = _nan_str(_rec.get('kieu_lookup', ''))
@@ -8156,8 +8712,8 @@ class BOMToolApp(ctk.CTk):
                                             break
                             if _raw is None:
                                 continue
-                            if _kl == 'nvl_or_btp' and str(_raw).strip() in _PLACEHOLDER_VALS_PS:
-                                continue   # rỗng/placeholder → BTP hoặc bỏ qua, không fuzzy_name
+                            if _kl == 'nvl_or_btp' and (_row_btp or str(_raw).strip() in _PLACEHOLDER_VALS_PS):
+                                continue   # dòng BTP / rỗng / placeholder → không fuzzy_name
                             _cache_key = (_bm, _dk, _ss, _lv)
                             _cache = _dcaches.get(_cache_key, [])
                             self._fuzzy_ctx = {
@@ -8165,9 +8721,16 @@ class BOMToolApp(ctk.CTk):
                             # nvl_or_btp: bản thân _lookup_generic không hiểu kiểu
                             # này, engine thật luôn tra theo 'fuzzy_name' cho phần
                             # Tên vật tư — dùng đúng loại đó khi pre-collect.
-                            self._lookup_generic(
+                            _lk_res, _lk_type = self._lookup_generic(
                                 _raw, _cache, 'fuzzy_name' if _kl == 'nvl_or_btp' else _kl,
                                 _nguong, _cache_key=_cache_key)
+                            if (_lk_res is None and _lk_type == 'none' and _ps_cur_group
+                                    and _ps_cur_group.get('cach_xu_ly') == HOW_MKT
+                                    and hasattr(self, '_mkt_use')):
+                                # Không tra được mã theo Tên vật tư → khi Import sẽ dùng mã tạm của nhóm
+                                self._mkt_use[(_sec, _rowno)] = (
+                                    _ps_cur_group.get('ten_nhom', ''), _ps_cur_group.get('ma_tam', ''),
+                                    _ps_vt_col)
             except Exception as _pe:
                 import traceback as _tb
                 _err_msg = _tb.format_exc()
@@ -8189,25 +8752,30 @@ class BOMToolApp(ctk.CTk):
             else:
                 self._fuzzy_resolutions = {}
             self._fuzzy_batch_done = True
+            self._bom_prescan_running = False
+            if self._bom_dirty or _ps_order != self._bom_selected_order_id:
+                # Sửa dữ liệu / đổi Đơn hàng trong lúc tra cứu → kết quả cũ, không cho Import
+                self._bom_layer2_done = False
+                self._refresh_bom_gate()
+                return
             self._bom_layer2_done  = True
-            status_msg = "✅  Kiểm tra thành công"
+            n_mkt = self._apply_mkt_warnings()
+            status_msg = "✅  Kiểm tra xong"
             if n_pending:
-                status_msg += f" — {n_pending} mã đã đối chiếu"
+                status_msg += f"  ·  {n_pending} mã đối chiếu"
             if n_wrn:
-                status_msg += f" — {n_wrn} cảnh báo"
+                status_msg += f"  ·  {n_wrn} cảnh báo"
+            if n_mkt:
+                status_msg += f"  ·  {n_mkt} dòng dùng mã tạm"
             self._set_status(status_msg, C["green"])
             has_order   = bool(self._bom_selected_order_id)
             has_creator = bool(self._current_creator_user_id)
             _s = tk.NORMAL if (has_order and has_creator) else tk.DISABLED
             self.btn_import.config(state=_s)
             self.btn_view_sql.configure(state=_s)
-            popup_msg = "Dữ liệu hợp lệ và đã đối chiếu với hệ thống!\n"
-            if n_pending:
-                popup_msg += f"{n_pending} mã vật tư đã được đối chiếu với hệ thống.\n"
-            if n_wrn:
-                popup_msg += f"Có {n_wrn} cảnh báo, không ảnh hưởng import.\n"
-            popup_msg += "\nNhấn Import để tiếp tục."
-            self._show_msg("✅ Kiểm tra thành công", popup_msg, 'info')
+            if silent:   # tự chạy sau khi chọn Nhân viên/Đơn hàng → chỉ báo ở thanh trạng thái
+                return
+            self._show_msg("Kiểm tra", "Kiểm tra xong. Bấm Import.", 'info')
 
         threading.Thread(target=_worker, daemon=True).start()
 
@@ -8368,8 +8936,8 @@ class BOMToolApp(ctk.CTk):
                     msg = warn_msg.replace('{result}', result_display)
                     for k, val in row.items():
                         msg = msg.replace('{' + k + '}', str(val or ''))
-                    if not self._ask_msg(f"Canh bao: {name}",
-                                               msg + "\n\nVan tiep tuc insert?"):
+                    if not self._ask_msg(f"Cảnh báo: {name}",
+                                               msg + "\n\nVẫn import?"):
                         return False
             except Exception as e:
                 self._log('', f'Validator {name}', 0, 'Warn', str(e), 'warn')
@@ -8392,8 +8960,9 @@ class BOMToolApp(ctk.CTk):
         """
         _dt = THEMES.get(ctk.get_appearance_mode(), THEMES["Dark"])
         dlg = tk.Toplevel(self)
+        dlg.attributes("-alpha", 0.0)
         dlg.title("Không tìm thấy mã chính xác — chọn tương đương")
-        dlg.geometry("640x280")
+        self._center_dialog(dlg, 640, 280)
         dlg.resizable(False, False)
         dlg.grab_set()
         dlg.configure(bg=_dt["bg_main"])
@@ -8428,7 +8997,7 @@ class BOMToolApp(ctk.CTk):
                 result[0] = int(sel[0])
                 dlg.destroy()
             else:
-                self._show_msg("Chưa chọn", "Hãy click chọn 1 dòng.", 'warning')
+                self._show_msg("Chưa chọn", "Chọn 1 dòng.", 'warning')
 
         def on_skip():
             dlg.destroy()
@@ -8447,6 +9016,8 @@ class BOMToolApp(ctk.CTk):
 
         dlg.wait_window()
         return result[0]
+
+    _FUZZY_AUTO_PICK_MIN = 90   # điểm khớp tối thiểu để hộp đối chiếu chọn sẵn mã gợi ý
 
     def _show_batch_fuzzy_dialog(self, pending):
         """
@@ -8476,8 +9047,8 @@ class BOMToolApp(ctk.CTk):
         dlg = ctk.CTkToplevel(self)
         dlg.withdraw()
         n = len(unique)
-        dlg.title(f"Xác nhận mapping fuzzy — {n} mã cần xử lý")
-        dlg.geometry("860x520")
+        dlg.title(f"Chọn mã tương đương ({n} mã)")
+        dlg.geometry("1180x580")
         dlg.resizable(True, True)
         dlg.transient(self)
         dlg.grab_set()
@@ -8489,13 +9060,13 @@ class BOMToolApp(ctk.CTk):
         top.pack(fill="x", padx=16, pady=(14, 4))
         ctk.CTkLabel(
             top,
-            text=f"Tìm thấy {n} mã không khớp chính xác trong file Excel.",
-            font=ctk.CTkFont(*FONT_LABEL),
+            text=f"{n} mã không khớp chính xác.",
+            font=ctk_font(*FONT_LABEL),
         ).pack(anchor="w")
         ctk.CTkLabel(
             top,
-            text="Chọn mã B20 tương đương cho từng dòng. Bỏ qua → giá trị sẽ là NULL.",
-            font=ctk.CTkFont(*FONT_BODY),
+            text=f"Chọn mã đúng cho từng dòng. Bỏ qua = để trống. Dưới {self._FUZZY_AUTO_PICK_MIN}% mặc định Bỏ qua.",
+            font=ctk_font(*FONT_BODY),
             text_color=("gray45", "gray65"),
         ).pack(anchor="w", pady=(2, 0))
 
@@ -8503,13 +9074,13 @@ class BOMToolApp(ctk.CTk):
         hdr_frame = ctk.CTkFrame(dlg, fg_color=("gray88", "gray22"), corner_radius=6)
         hdr_frame.pack(fill="x", padx=PAD_MD, pady=(6, 2))
         for col, (txt, w, anchor) in enumerate([
-            ("Section · Trường", 200, "w"),
-            ("Mã Excel (không khớp)", 190, "w"),
-            ("Chọn mã B20 tương đương", 0, "w"),
+            ("Section · Trường", 190, "w"),
+            ("Trong file Excel", 380, "w"),
+            ("Mã tương đương", 0, "w"),
         ]):
             ctk.CTkLabel(
                 hdr_frame, text=txt,
-                font=ctk.CTkFont(*FONT_BODY_B),
+                font=ctk_font(*FONT_BODY_B),
                 width=w, anchor=anchor,
             ).grid(row=0, column=col, padx=(10, 4), pady=6, sticky="w")
         hdr_frame.grid_columnconfigure(2, weight=1)
@@ -8537,33 +9108,38 @@ class BOMToolApp(ctk.CTk):
             row_f.grid_columnconfigure(2, weight=1)
 
             ctk.CTkLabel(
-                row_f, text=ctx_text, width=200, anchor="w",
-                font=ctk.CTkFont(*FONT_BODY),
+                row_f, text=ctx_text, width=190, anchor="w",
+                font=ctk_font(*FONT_BODY),
                 text_color=("gray40", "gray70"),
-            ).grid(row=0, column=0, padx=(10, 4), pady=7, sticky="w")
+            ).grid(row=0, column=0, padx=(10, 4), pady=7, sticky="nw")
 
+            # Tên dài (vd vật liệu ghép "A + B + C") → xuống dòng thay vì bị cắt
             ctk.CTkLabel(
-                row_f, text=item['val'], width=170, anchor="w",
-                font=ctk.CTkFont(*FONT_BODY_B),
-            ).grid(row=0, column=1, padx=PAD_XS, pady=7, sticky="w")
+                row_f, text=item['val'], width=380, anchor="w", justify="left",
+                wraplength=370, font=ctk_font(*FONT_BODY_B),
+            ).grid(row=0, column=1, padx=PAD_XS, pady=7, sticky="nw")
 
             # Build dropdown options
             option_labels = []
             id_map = {}
             for score, c in item.get('candidates', []):
-                lbl = f"{score:.0f}% — {c['code']} — {c.get('name', '')[:45]}"
+                lbl = f"{score:.0f}% — {c['code']} — {c.get('name', '')[:70]}"
                 option_labels.append(lbl)
                 id_map[lbl] = c['id']
-            skip_lbl = "⊘ Bỏ qua (NULL)"
+            skip_lbl = "⊘ Bỏ qua"
             option_labels.append(skip_lbl)
             id_map[skip_lbl] = None
 
-            var = ctk.StringVar(value=option_labels[0])
+            # Gợi ý yếu (< 90%) dễ sai (vd "Linh Ân" → công ty khác 75%) → mặc định "Bỏ qua",
+            # người dùng phải chủ động chọn mã. Gợi ý ≥ 90% vẫn chọn sẵn mã đầu tiên.
+            top_score = max((s for s, _ in item.get('candidates', [])), default=0)
+            var = ctk.StringVar(
+                value=option_labels[0] if top_score >= self._FUZZY_AUTO_PICK_MIN else skip_lbl)
             choices[k] = (var, id_map)
 
             ctk.CTkOptionMenu(
-                row_f, values=option_labels, variable=var,
-                font=ctk.CTkFont(*FONT_BODY), anchor="w",
+                row_f, values=option_labels, variable=var, dynamic_resizing=False,
+                font=ctk_font(*FONT_BODY), anchor="w",
                 fg_color=("#FFFFFF", "#252526"),
                 text_color=("#0F172A", "#E8E8E8"),
                 button_color=("#E2E8F0", "#1B2A4A"),
@@ -8571,7 +9147,7 @@ class BOMToolApp(ctk.CTk):
                 dropdown_fg_color=("#FFFFFF", "#252526"),
                 dropdown_text_color=("#0F172A", "#E8E8E8"),
                 dropdown_hover_color=("#BFDBFE", "#0066CC"),
-            ).grid(row=0, column=2, padx=(4, 10), pady=5, sticky="ew")
+            ).grid(row=0, column=2, padx=(4, 10), pady=5, sticky="new")
 
         # ── Buttons ───────────────────────────────────────────────────────────
         btn_frame = ctk.CTkFrame(dlg, fg_color="transparent")
@@ -8603,14 +9179,12 @@ class BOMToolApp(ctk.CTk):
             hover_color=("gray90", "gray25"),
         ).pack(side="right")
 
-        # Center dialog on parent window
-        dlg.update_idletasks()
-        pw, ph = self.winfo_width(), self.winfo_height()
-        px, py = self.winfo_rootx(), self.winfo_rooty()
-        mx = px + (pw - 860) // 2
-        my = py + (ph - 520) // 2
-        dlg.geometry(f"860x520+{mx}+{my}")
+        # Căn giữa cửa sổ chính; kích thước theo cửa sổ chính (đã tính hệ số DPI) để không tràn màn hình
+        sc = dlg._get_window_scaling()
+        dw = int(min(1280, max(760, self.winfo_width() / sc * 0.9)))
+        dh = int(min(580, max(420, self.winfo_height() / sc * 0.8)))
         dlg.deiconify()
+        self._center_dialog(dlg, dw, dh)
         dlg.wait_window()
 
         return result[0] if result[0] is not None else {}
@@ -9098,26 +9672,31 @@ class BOMToolApp(ctk.CTk):
                     self._log('', f'detail_cache({bm})', 0, 'Warn', str(e), 'warn')
         return caches
 
-    def _find_existing_btp_code(self, conn, item_code0, ten_chi_tiet):
+    def _find_existing_btp_code(self, conn, item_code0, ten_chi_tiet, muc_so=None):
         """
-        Tìm B20Item BTP đã tạo trước đó cho đúng sản phẩm cha (item_code0) +
-        đúng tên chi tiết — dùng để tái dùng thay vì để USP tạo mã mới mỗi
-        lần import lại cùng 1 BOM.
-        Scope theo Code LIKE item_code0 + '.%' (đúng prefix mà
-        usp_B20BOM_Create_ItemCode tự dùng để sinh số thứ tự) để tránh lấy
-        nhầm item cùng tên nhưng khác sản phẩm. Nếu có nhiều mã trùng (dữ
-        liệu cũ đã bị tạo rác) → lấy mã mới nhất (Id lớn nhất).
+        Tìm B20Item BTP đã tạo trước đó cho đúng sản phẩm cha (item_code0),
+        đúng Mục số (muc_so) và đúng tên chi tiết — dùng để tái dùng thay vì
+        để USP tạo mã mới mỗi lần import lại cùng 1 BOM.
+        usp_B20BOM_Create_ItemCode sinh mã dạng ItemCode0.MụcSố.000N nên so
+        khớp CHÍNH XÁC phần tiền tố (bỏ 5 ký tự cuối ".000N") với
+        "ItemCode0.MụcSố" — không dùng LIKE 'ItemCode0.%' vì sẽ trùm cả mã
+        của sản phẩm có tiền tố dài hơn (vd LO.CH.AS47 và LO.CH.AS47.A) và
+        của Mục khác cùng sản phẩm. Không biết Mục số → không tái dùng (để
+        SP tạo mã mới) thay vì đoán nhầm. Nếu có nhiều mã trùng (dữ liệu cũ
+        đã bị tạo rác) → lấy mã mới nhất (Id lớn nhất).
         Trả về Id hoặc None.
         """
-        if not item_code0 or not ten_chi_tiet:
+        if not item_code0 or not ten_chi_tiet or muc_so in (None, ''):
             return None
         try:
             cur = conn.cursor()
             cur.execute(
                 "SELECT TOP 1 Id FROM B20Item "
-                "WHERE IsActive = 1 AND Name = ? AND Code LIKE ? "
+                "WHERE IsActive = 1 AND Name = ? "
+                "AND Code LIKE '%.[0-9][0-9][0-9][0-9]' "
+                "AND LEFT(Code, LEN(Code) - 5) = ? "
                 "ORDER BY Id DESC",
-                (ten_chi_tiet, item_code0 + '.%')
+                (ten_chi_tiet, f"{item_code0}.{muc_so}")
             )
             row = cur.fetchone()
             return row[0] if row else None
@@ -9127,7 +9706,7 @@ class BOMToolApp(ctk.CTk):
     def _resolve_detail_row(self, mapping_recs, df_row, parent_row, conn,
                             detail_caches, now, builtin_order, bom_detail_type,
                             sp_cfgs=None, bom_section='', is_btp_row=False,
-                            item_code0=None):
+                            item_code0=None, muc_so=None):
         """
         Resolve một hàng DataFrame (BOM2/3/4) → dict {sql_col: value}.
         - mapping_recs : list record từ mapping sheet BOM2/3/4
@@ -9135,10 +9714,12 @@ class BOMToolApp(ctk.CTk):
         - parent_row   : dict B20BOM header đã resolve (để copy BranchCode, EffectiveDate, ...)
         - builtin_order: số thứ tự hàng (1, 2, 3...)
         - bom_detail_type: 2 / 3 / 4
-        - is_btp_row   : True nếu dòng này được xác định là BTP (STT nguyên +
-                         Tên vật tư rỗng + có con) — dùng cho kieu_lookup=nvl_or_btp
+        - is_btp_row   : True nếu dòng BOM2 là BTP (Tên vật tư trống/'+' và Đvt
+                         CỤM) — dùng cho kieu_lookup=nvl_or_btp
         - item_code0   : Code của B20Item ứng với ItemId0 (sản phẩm cha) — dùng
                          để scope khi tái dùng mã BTP đã tạo trước đó
+        - muc_so       : Mục số của dòng đơn hàng (BuiltinOrder0) — phần giữa
+                         của mã BTP ItemCode0.MụcSố.000N, dùng cùng item_code0
         """
         import datetime as _dt
         import math as _math
@@ -9349,7 +9930,7 @@ class BOMToolApp(ctk.CTk):
                         # Scope theo item_code0 (mã sản phẩm cha, đúng prefix SP
                         # tự dùng) — nếu nhiều mã trùng tên (dữ liệu cũ đã tạo
                         # rác) thì lấy mã mới nhất, không bỏ cuộc như popup thường.
-                        raw = self._find_existing_btp_code(conn, item_code0, _ct_val) if _ct_val else None
+                        raw = self._find_existing_btp_code(conn, item_code0, _ct_val, muc_so) if _ct_val else None
                     elif _vt_val and _vt_val not in {'_', '--', '-', 'x', 'n/a'}:
                         # Placeholder ("_", "--"...) → coi như không có tên, bỏ
                         # qua lookup — tránh chuẩn hóa ra chuỗi rỗng rồi khớp
@@ -9526,14 +10107,18 @@ class BOMToolApp(ctk.CTk):
         # ── Build MKT fallback cache (1 lần / import) ────────────────────────
         # Khi ItemId=NULL (không lookup được hoặc user bỏ qua), dùng mã tạm
         # từ vB20Item_MKT theo ItemType thay vì gọi USP tạo mã rác.
+        self._btp_row_ids = set()   # id(row_vals) của dòng BOM2 khớp rule BTP (Tên vật tư trống/'+' + Đvt CỤM)
         _mkt_cache = {}
+        _mkt_by_code = {}
+        _group_table = build_group_table(mapping, _norm_vn)   # {} nếu chưa khai báo NHOM_QUY_DOI
         try:
             _cur = conn.cursor()
             _cur.execute(
-                "SELECT ItemTypeSX_Parent, Id FROM [BOMTool].[dbo].[vB20Item_MKT]"
+                "SELECT ItemTypeSX_Parent, Id, Code FROM [BOMTool].[dbo].[vB20Item_MKT]"
             )
             for _r in _cur.fetchall():
-                _mkt_cache[_r[0]] = _r[1]
+                _mkt_cache[_r[0]] = _r[1]          # cũ: theo ItemType (chỉ dùng khi chưa có NHOM_QUY_DOI)
+                _mkt_by_code[str(_r[2]).strip()] = _r[1]   # theo Code — dùng với bảng NHOM_QUY_DOI
         except Exception:
             pass   # nếu view không truy cập được → không fallback, giữ NULL
         # ─────────────────────────────────────────────────────────────────────
@@ -9550,6 +10135,23 @@ class BOMToolApp(ctk.CTk):
                 _r0 = _cur0.fetchone()
                 if _r0:
                     _item_code0 = _r0[0]
+            except Exception:
+                pass
+
+        # Mục số của dòng đơn hàng (B30BizDocDetailSO.BuiltinOrder0) — chính là
+        # đoạn giữa của mã BTP do SP sinh (ItemCode0.MụcSố.000N). Dùng để tra
+        # mã tái dùng đúng tiền tố, không lẫn sang Mục/sản phẩm khác.
+        _muc_so = None
+        _drow_so = parent_row.get('DetailRowId_SO')
+        if _drow_so:
+            try:
+                _cur_m = conn.cursor()
+                _cur_m.execute(
+                    "SELECT TOP 1 BuiltinOrder0 FROM B30BizDocDetailSO WHERE DetailRowId_SO = ?",
+                    (str(_drow_so).strip(),))
+                _rm = _cur_m.fetchone()
+                if _rm and _rm[0] is not None:
+                    _muc_so = str(_rm[0]).strip()
             except Exception:
                 pass
 
@@ -9596,173 +10198,17 @@ class BOMToolApp(ctk.CTk):
                 if r.get('fill_forward') == '1' and r.get('ten_excel')
             ]
             current_ff   = {}
+            _cur_group   = None   # record NHOM_QUY_DOI của nhóm hiện hành (None nếu chưa có/không khớp)
             builtin_order = 0
             resolved_rows = []
 
-            # ── BTP detection (chỉ BOM2) ─────────────────────────────────────
-            # 2 rule độc lập đánh dấu 1 STT là BTP — không phải NVL đơn:
-            #   1. Tên vật tư RỖNG ở chính dòng đó, VÀ (có Tên chi tiết để đặt
-            #      tên cho mã mới HOẶC có ít nhất 1 dòng con thập phân (X.1,
-            #      X.2...) ngay bên dưới) — chỉ cần 1 trong 2 điều kiện sau là
-            #      đủ. Áp dụng ĐỆ QUY mọi tầng (1 → 1.1 → 1.1.1...), không chỉ
-            #      STT nguyên. Ví dụ: 1.17 rỗng, không con, nhưng có Tên chi
-            #      tiết → vẫn là BTP. 1 rỗng, không Tên chi tiết, nhưng có con
-            #      1.1/1.2 → vẫn là BTP (giữ hành vi cũ). Dòng rỗng cả Tên vật
-            #      tư lẫn Tên chi tiết VÀ không con → bị loại (không đủ dữ
-            #      liệu để tạo mã, coi là thiếu nhập liệu, không phải BTP).
-            #   2. Tên vật tư chứa dấu "+" (ghép nhiều vật liệu vào 1 ô, vd
-            #      "MDF... + Tấm chống cháy... + ...") → vật liệu ghép/dán
-            #      thành 1 tấm composite trước khi cắt, không lookup được
-            #      theo tên ghép. CHỈ áp dụng cho STT nguyên có nhãn "Tên chi
-            #      tiết" riêng biệt (KHUNG BAO ĐỨNG...) — KHÔNG áp dụng cho
-            #      dòng con dạng "TỔ HỢP" (nhãn lặp lại nhiều lần trong cùng
-            #      BOM, tìm theo Tên chi tiết dễ tái dùng nhầm).
-            # BTP thiếu mã KHÔNG dùng MKT — để trống ItemId, cho SP_HOOK
-            # BeforeInsertBatch (usp_B20BOM_Create_ItemCode, Condition:
-            # EMPTY(ItemId), đã Kích hoạt=1 sẵn trong CK_Mapping_v5) tự chạy
-            # như cơ chế gốc (hoặc tái dùng mã cũ qua _find_existing_btp_code).
-            def _get_stt_pre(raw):
-                """str(0 or '') = '' — xử lý integer 0 đúng (đồng nhất với _get_stt trong loop)."""
-                if raw in (0, 0.0): return "0"
-                if raw is None or raw == '': return ''
-                if isinstance(raw, float) and _math.isnan(raw): return ''
-                return str(raw).strip()
-
-            _btp_stt_set = set()
-            _btp_skip_mkt_set = set()
-            _sec_id_seq = None
-            if section == 'BOM2' and stt_col is not None:
-                _norm_tvt = _norm_vn('Tên vật tư')
-                _ten_vt_col = next(
-                    (c for c in df.columns if _norm_vn(str(c)) == _norm_tvt),
-                    None)
-                if _ten_vt_col is None:
-                    # Pass 2: suffix match — cột bị merge header cha (vd
-                    # "SLg_Tên_Vật_Tư"), đồng nhất với logic ở _resolve_detail_row.
-                    _ten_vt_col = next(
-                        (c for c in df.columns
-                         if _norm_vn(str(c)).endswith(_norm_tvt)
-                         and len(_norm_vn(str(c))) > len(_norm_tvt)),
-                        None)
-                if _ten_vt_col is not None:
-                    _norm_tct = _norm_vn('Tên chi tiết')
-                    _ten_ct_col = next(
-                        (c for c in df.columns if _norm_vn(str(c)) == _norm_tct),
-                        None)
-                    if _ten_ct_col is None:
-                        _ten_ct_col = next(
-                            (c for c in df.columns
-                             if _norm_vn(str(c)).endswith(_norm_tct)
-                             and len(_norm_vn(str(c))) > len(_norm_tct)),
-                            None)
-
-                    _PLACEHOLDER_VALS = {'_', '--', '-', 'x', 'n/a'}
-                    _stt_seq = [_get_stt_pre(df.iloc[_i].get(stt_col)) for _i in range(len(df))]
-
-                    # Mỗi section (A, B, C...) tự đánh số lại STT từ 1 — "1" ở
-                    # section A và "1" ở section B là 2 dòng HOÀN TOÀN KHÁC
-                    # NHAU. _sec_id_seq gán mỗi dòng 1 "mã section" (= vị trí
-                    # dòng section-header gần nhất phía trên) để tránh
-                    # _btp_stt_set bị lẫn STT trùng số giữa
-                    # các section (đã xảy ra thật: STT=1 của section A là BTP
-                    # → lây nhiễm sai sang STT=1 của section B/C).
-                    _sec_id_seq = [None] * len(_stt_seq)
-                    _cur_sec = -1
-                    for _i, _s in enumerate(_stt_seq):
-                        if _s and SECTION_STT_PATTERN.match(_s):
-                            _cur_sec = _i
-                        _sec_id_seq[_i] = _cur_sec
-
-                    def _is_real_vt(v):
-                        if v is None: return False
-                        if isinstance(v, float) and _math.isnan(v): return False
-                        s = str(v).strip()
-                        return bool(s) and s.lower() != 'nan' and s not in _PLACEHOLDER_VALS
-
-                    # Tìm Tên vật tư của dòng cha (STT=_pstt) — quét NGƯỢC từ vị
-                    # trí _i để tránh đụng STT trùng lặp ở section khác (mỗi
-                    # section đánh số lại từ 1). Ưu tiên khớp ĐÚNG STT cha kiểu
-                    # lồng thập phân (X.Y → X, đệ quy nếu cha cũng rỗng) — GIỮ
-                    # NGUYÊN hành vi cũ cho các file dùng kiểu này (vd ARMCHAIR:
-                    # "1" → "1.1".."1.8").
-                    #
-                    # Fallback (chỉ chạy khi KHÔNG có dòng "X" trần nào — file
-                    # dùng kiểu đánh số khác: mỗi chi tiết là 1 số nguyên riêng
-                    # + ".1", không lồng nhau thật, vd "7.1" khai vật liệu,
-                    # "8.1".."13.1" là mảnh cắt, không có dòng "8" trần nào cả):
-                    # quét ngược trong CÙNG SECTION, lấy dòng gần nhất có Tên
-                    # vật tư thật — dừng lại ngay khi gặp dòng section-header
-                    # hoặc sang section khác, không lấn dữ liệu section khác.
-                    def _find_parent_vt(_i, _pstt):
-                        for _j in range(_i - 1, -1, -1):
-                            if _stt_seq[_j] == _pstt:
-                                _v = df.iloc[_j].get(_ten_vt_col)
-                                if _is_real_vt(_v):
-                                    return _v
-                                if '.' in _pstt:
-                                    return _find_parent_vt(_j, _pstt.rsplit('.', 1)[0])
-                                return None
-                        _cur_sec = _sec_id_seq[_i]
-                        for _j in range(_i - 1, -1, -1):
-                            if _sec_id_seq[_j] != _cur_sec:
-                                break
-                            _sj = _stt_seq[_j]
-                            if _sj and SECTION_STT_PATTERN.match(_sj):
-                                break
-                            _v = df.iloc[_j].get(_ten_vt_col)
-                            if _is_real_vt(_v):
-                                return _v
-                        return None
-
-                    for _i, _s in enumerate(_stt_seq):
-                        if not _s or not NUMERIC_STT_PATTERN.match(_s):
-                            continue
-                        _skey = (_sec_id_seq[_i], _s)   # scope theo section — tránh trùng STT khác section
-                        _vt_raw = df.iloc[_i].get(_ten_vt_col)
-                        _vt_empty = not _is_real_vt(_vt_raw)
-
-                        # Rule 2: CHỈ STT nguyên (không thập phân) + Tên vật tư chứa "+"
-                        # → container thật (không có vật liệu cha khác để rơi về
-                        # MKT) — nếu chưa có mã tái dùng thì để SP_HOOK tự tạo mới.
-                        if '.' not in _s and not _vt_empty and '+' in str(_vt_raw):
-                            _btp_stt_set.add(_skey)
-                            _btp_skip_mkt_set.add(_skey)
-                            continue
-
-                        # Rule 1: Tên vật tư rỗng + (có Tên chi tiết để đặt tên mã mới
-                        # HOẶC có dòng con bên dưới — chỉ cần 1 trong 2 là đủ, mọi tầng).
-                        if not _vt_empty:
-                            continue
-
-                        _ct_raw = df.iloc[_i].get(_ten_ct_col) if _ten_ct_col is not None else None
-                        _ct_empty = (_ct_raw is None
-                                     or (isinstance(_ct_raw, float) and _math.isnan(_ct_raw))
-                                     or str(_ct_raw).strip().lower() in ('', 'nan')
-                                     or str(_ct_raw).strip() in _PLACEHOLDER_VALS)
-                        _has_child = False
-                        for _ns in _stt_seq[_i + 1:]:
-                            if _ns.startswith(_s + '.'):
-                                _has_child = True
-                            else:
-                                break
-                        if not _ct_empty or _has_child:
-                            _btp_stt_set.add(_skey)
-                            # Dòng con (thập phân) mà dòng cha (1 cấp trên) ĐÃ có
-                            # Tên vật tư thật → chỉ là mảnh cắt/tiêu hao từ vật
-                            # liệu cha (vd miếng vải/tấm cắt rời theo module) —
-                            # vẫn thử tìm mã tái dùng theo Tên chi tiết trước
-                            # (_find_existing_btp_code), nhưng nếu KHÔNG có thì
-                            # KHÔNG cho SP_HOOK tự tạo mã mới — rơi về MKT-fallback
-                            # theo nhóm vật tư (MKT_VAI...) thay vì tạo mã rác.
-                            # Container thật (cha cũng rỗng, hoặc STT nguyên) vẫn
-                            # giữ hành vi cũ: không có mã tái dùng → để SP_HOOK tạo.
-                            _parent_has_material = (
-                                '.' in _s
-                                and _is_real_vt(_find_parent_vt(_i, _s.rsplit('.', 1)[0]))
-                            )
-                            if not _parent_has_material:
-                                _btp_skip_mkt_set.add(_skey)
-
+            # ── BTP (chỉ BOM2) ─────────────────────────────────────────────────
+            # Dòng có Tên vật tư TRỐNG hoặc chứa dấu "+" VÀ Đvt = CỤM → BTP: để
+            # trống ItemId cho SP_HOOK BeforeInsertBatch (usp_B20BOM_Create_ItemCode)
+            # tạo mã, hoặc tái dùng mã cũ theo Tên chi tiết. Không còn rule nào
+            # khác (cột BTP, dòng con, dòng cha...) — xem services/bom_rules.py.
+            _btp_vt_col  = find_col(df.columns, _norm_vn, 'Tên vật tư')
+            _btp_dvt_col = find_col(df.columns, _norm_vn, 'Đvt')
 
             for _pos, (_, df_row) in enumerate(df.iterrows()):
                 if df_row.isna().all():
@@ -9798,26 +10244,40 @@ class BOMToolApp(ctk.CTk):
                         is_section_header = False  # có dims → data row (GIAO RỜI/sub-group), không phải section header
 
                 if is_section_header:
+                    _prev_itype = current_ff.get('ItemType')
                     for (ten_excel, sql_col_ff) in ff_fields:
                         raw = df_row.get(ten_excel)
                         if raw is not None and not (isinstance(raw, float) and _math.isnan(raw)) \
                                 and str(raw).strip() not in ('', 'nan'):
                             current_ff[sql_col_ff] = str(raw).strip()
+                    if _group_table.get(section):
+                        # Quy đổi theo TÊN nhóm (mẫu cũ/mới khác chữ): ItemType = loại chuẩn của bảng
+                        _grp = resolve_group(section, df_row.values, _group_table, _norm_vn)
+                        if _grp is not None:
+                            _cur_group = _grp
+                            if _grp.get('loai_chuan'):
+                                current_ff['ItemType'] = _grp['loai_chuan']
+                        elif is_roman_stt(stt_v):   # nhóm con (I, II…) — giữ nhóm chữ phía trên
+                            if _prev_itype is not None:
+                                current_ff['ItemType'] = _prev_itype
+                            else:
+                                current_ff.pop('ItemType', None)
                     continue
 
-                # Scope theo section (mã section-header gần nhất phía trên) —
-                # tránh STT trùng số giữa các section khác nhau (vd "1" ở
-                # section A và "1" ở section B là 2 dòng khác nhau hoàn toàn).
-                _sec_key = _sec_id_seq[_pos] if _sec_id_seq is not None and _pos < len(_sec_id_seq) else None
-                _btp_key = (_sec_key, stt_v)
-
                 builtin_order += 1
+                _is_btp = bool(
+                    NUMERIC_STT_PATTERN.match(stt_v)
+                    and row_is_btp(section,
+                                   df_row.get(_btp_vt_col) if _btp_vt_col is not None else None,
+                                   df_row.get(_btp_dvt_col) if _btp_dvt_col is not None else None,
+                                   _norm_vn))
                 row_vals = self._resolve_detail_row(
                     detail_recs, df_row, parent_row, conn,
                     detail_caches, now, builtin_order, bom_detail_type,
                     sp_cfgs=sp_cfgs_section, bom_section=section,
-                    is_btp_row=(_btp_key in _btp_stt_set),
-                    item_code0=_item_code0
+                    is_btp_row=_is_btp,
+                    item_code0=_item_code0,
+                    muc_so=_muc_so
                 )
 
                 # Fill-Forward
@@ -9826,15 +10286,22 @@ class BOMToolApp(ctk.CTk):
                         row_vals[sql_col_ff] = current_ff[sql_col_ff]
 
                 # MKT fallback: ItemId=NULL → dùng mã tạm theo ItemType.
-                # BỎ QUA cho dòng "container BTP" thật (_btp_key trong
-                # _btp_skip_mkt_set) — để trống ItemId, SP_HOOK BeforeInsertBatch
-                # (usp_B20BOM_Create_ItemCode) tự tạo mã thật thay vì mã tạm.
-                # Dòng BTP dạng "mảnh cắt từ vật liệu cha" (không có trong tập
-                # này dù có trong _btp_stt_set) VẪN được fallback MKT bình
-                # thường nếu không tìm thấy mã tái dùng.
-                if not row_vals.get('ItemId') and _mkt_cache and _btp_key not in _btp_skip_mkt_set:
-                    _item_type = row_vals.get('ItemType')
-                    _fallback = _mkt_cache.get(_item_type) or _mkt_cache.get(None)
+                # BỎ QUA dòng BTP (rule BOM2) và nhóm thầu phụ/gia công (BOM3: H,
+                # E2; BOM2: H) — usp_B20BOM_Create_ItemCode tự tạo mã cho đúng các
+                # dòng này nên để ItemId trống cho SP_HOOK.
+                _sp_creates_btp = sp_expects_code(
+                    section, row_vals.get('ItemType'), btp_row=_is_btp)
+                if _is_btp:
+                    self._btp_row_ids.add(id(row_vals))
+                _fallback = None
+                if not row_vals.get('ItemId') and not _sp_creates_btp:
+                    if _group_table.get(section):
+                        # Mã tạm theo bảng NHOM_QUY_DOI; nhóm không có mã tạm (hoặc không khớp) → để NULL
+                        if _cur_group and _cur_group.get('cach_xu_ly') == HOW_MKT:
+                            _fallback = _mkt_by_code.get(_cur_group.get('ma_tam', ''))
+                    elif _mkt_cache:   # chưa có bảng NHOM_QUY_DOI → cách cũ theo ItemType
+                        _item_type = row_vals.get('ItemType')
+                        _fallback = _mkt_cache.get(_item_type) or _mkt_cache.get(None)
                     if _fallback:
                         row_vals['ItemId'] = _fallback
                         # Fallback ĐVT riêng cho dòng vừa nhận mã MKT — ItemId
@@ -9854,6 +10321,11 @@ class BOMToolApp(ctk.CTk):
                                     row_vals['Unit'] = _rmu[0]
                             except Exception:
                                 pass
+
+                # IsBB (NOT NULL, mặc định 0 theo mapping): BOM2 có Đvt = BB → 1. Xét Đvt cuối cùng
+                # (sau khi đã lấy từ Excel / dự phòng theo vật tư)
+                if row_is_bb(section, row_vals.get('Unit'), _norm_vn):
+                    row_vals['IsBB'] = 1
 
                 # Per-row SP_HOOK BeforeInsert — dùng shared runner
                 _run_row_sp_hooks(
@@ -9992,7 +10464,7 @@ class BOMToolApp(ctk.CTk):
             h_outs     = [f.strip() for f in hook.get('outputfields', '').split(',') if f.strip()]
 
             if not (xml_param and xml_tag and xml_fields):
-                hook_meta.append({'batch_idx': {}, 'h_outs': h_outs})
+                hook_meta.append({'batch_idx': {}, 'h_outs': h_outs, 'section': section})
                 xml_args[xml_param or f'_empty_{len(xml_args)}'] = EMPTY_XML
                 continue
 
@@ -10013,7 +10485,7 @@ class BOMToolApp(ctk.CTk):
                 if should_run:
                     batch_idx[idx] = row_vals
 
-            hook_meta.append({'batch_idx': batch_idx, 'h_outs': h_outs})
+            hook_meta.append({'batch_idx': batch_idx, 'h_outs': h_outs, 'section': section})
 
             # Build XML (Id = idx+1 để map ngược)
             def _xml_escape(v):
@@ -10043,8 +10515,11 @@ class BOMToolApp(ctk.CTk):
                         # đúng — row_vals (dùng cho INSERT thật ở Pha 3) không
                         # bị đụng, vẫn giữ nguyên text mô tả gốc để hiển thị
                         # trên Bravo.
-                        if field == 'ItemName' and isinstance(_fval, str) and \
-                                ('+' in _fval or _fval.strip() in {'_', '--', '-', 'x', 'n/a'}):
+                        if field == 'ItemName' and (
+                                id(row_vals) in self._btp_row_ids
+                                or (isinstance(_fval, str)
+                                    and ('+' in _fval
+                                         or _fval.strip() in {'_', '--', '-', 'x', 'n/a'}))):
                             _fval = ''
                         attrs.append(f'{field}="{_xml_escape(_fval)}"')
                     parts.append(f'  <{xml_tag} {" ".join(attrs)} />')
@@ -10147,11 +10622,62 @@ class BOMToolApp(ctk.CTk):
             self._log('', f'SP_HOOK_BATCH {sp_name}', 0, 'Error', friendly, 'error')
             raise RuntimeError(friendly) from e
 
+        # R6: SP âm thầm bỏ qua dòng không đủ điều kiện → ItemId vẫn rỗng.
+        # Dòng BTP (H/E2...) mà không có mã thì dừng, không để vào BOM.
+        for meta in hook_meta:
+            _btp_idx = {i for i, rv in meta['batch_idx'].items()
+                          if id(rv) in self._btp_row_ids}
+            missing = find_missing_sp_codes(
+                meta.get('section', ''), meta['batch_idx'], btp_idx=_btp_idx)
+            if missing:
+                lines = [
+                    f"  - {rv.get('ItemType') or '?'} | "
+                    f"{(rv.get('ItemName') or rv.get('Name') or '')[:60]}"
+                    for _, rv in missing[:15]
+                ]
+                more = f"\n  ... và {len(missing) - 15} dòng khác" if len(missing) > 15 else ''
+                friendly = (
+                    f"{meta.get('section')}: {len(missing)} dòng BTP không nhận được mã "
+                    f"từ stored procedure (SP bỏ qua dòng):\n" + '\n'.join(lines) + more
+                    + "\n→ Kiểm tra Tên chi tiết/Tên vật tư của các dòng này rồi import lại."
+                )
+                self._log('', f'SP_HOOK_BATCH {sp_name}', 0, 'Error', friendly, 'error')
+                raise RuntimeError(friendly)
+
 
     # ── Custom dialog helpers (thay thế tkinter messagebox) ──────────────────
+    def _center_dialog(self, dlg, w=None, h=None, where="center"):
+        """Đặt MỌI hộp thoại/thông báo giữa cửa sổ chính (where="bottom": giữa, sát đáy — toast).
+        w, h là kích thước logic; bỏ trống thì lấy theo nội dung. CTkToplevel tự nhân kích thước với
+        hệ số DPI nhưng KHÔNG nhân vị trí → phải tính kích thước vật lý để căn giữa đúng (trước đây
+        hộp thoại lệch/tràn khỏi màn hình khi Windows phóng to 125–150%). Hộp thoại được ẩn (alpha 0)
+        từ lúc tạo tới khi đặt xong vị trí nên không còn nhảy từ góc màn hình ra giữa."""
+        dlg.update_idletasks()
+        sc = dlg._get_window_scaling() if hasattr(dlg, "_get_window_scaling") else 1.0
+        w = w or max(1, round(dlg.winfo_reqwidth() / sc))
+        h = h or max(1, round(dlg.winfo_reqheight() / sc))
+        pw, ph = round(w * sc), round(h * sc)   # kích thước vật lý
+        try:
+            self.update_idletasks()
+            if not self.winfo_viewable() or self.state() == "iconic":
+                raise ValueError("cửa sổ chính không hiện")
+            left, top = self.winfo_rootx(), self.winfo_rooty()
+            cw, ch = self.winfo_width(), self.winfo_height()
+        except Exception:
+            left, top = 0, 0
+            cw, ch = dlg.winfo_screenwidth(), dlg.winfo_screenheight()
+        x = left + (cw - pw) // 2
+        y = top + (ch - ph) // 2 if where == "center" else top + ch - ph - 60
+        dlg.geometry(f"{w}x{h}+{max(0, x)}+{max(0, y)}")
+        try:
+            dlg.attributes("-alpha", 1.0)
+        except Exception:
+            pass
+
     def _show_msg(self, title, msg, kind='info'):
         """Custom CTk dialog: kind = 'info' | 'warning' | 'error'."""
         dlg = ctk.CTkToplevel(self)
+        dlg.attributes('-alpha', 0.0)   # ẩn tới khi _center_dialog đặt xong vị trí
         dlg.title(title)
         dlg.resizable(False, False)
         dlg.transient(self)
@@ -10167,21 +10693,19 @@ class BOMToolApp(ctk.CTk):
         icon_frm = ctk.CTkFrame(dlg, fg_color=_c, corner_radius=22, width=44, height=44)
         icon_frm.pack(pady=(22, 0))
         icon_frm.pack_propagate(False)
-        ctk.CTkLabel(icon_frm, text=_i, font=ctk.CTkFont(*FONT_TITLE),
+        ctk.CTkLabel(icon_frm, text=_i, font=ctk_font(*FONT_TITLE),
                      text_color="white").place(relx=.5, rely=.5, anchor="center")
         ctk.CTkLabel(dlg, text=title,
-                     font=ctk.CTkFont(*FONT_LABEL)).pack(pady=(10, 2), padx=24)
+                     font=ctk_font(*FONT_LABEL)).pack(pady=(10, 2), padx=24)
         ctk.CTkLabel(dlg, text=msg,
-                     font=ctk.CTkFont(*FONT_BODY),
+                     font=ctk_font(*FONT_BODY),
                      wraplength=320, justify="center").pack(pady=(0, 16), padx=24)
         ctk.CTkButton(dlg, text="OK", width=100,
                       command=dlg.destroy).pack(pady=(0, 20))
         dlg.bind("<Return>", lambda e: dlg.destroy())
         dlg.bind("<Escape>", lambda e: dlg.destroy())
         dlg.update_idletasks()
-        w, h = 380, dlg.winfo_reqheight() + 20
-        sw, sh = dlg.winfo_screenwidth(), dlg.winfo_screenheight()
-        dlg.geometry(f"{w}x{h}+{(sw-w)//2}+{(sh-h)//2}")
+        self._center_dialog(dlg, 380, round(dlg.winfo_reqheight() / dlg._get_window_scaling()) + 20)
         dlg.focus_set()
         dlg.wait_window()
 
@@ -10192,21 +10716,21 @@ class BOMToolApp(ctk.CTk):
         t = ctk.CTkToplevel(self)
         t.overrideredirect(True)
         t.attributes('-topmost', True)
-        t.attributes('-alpha', 0.92)
+        t.attributes('-alpha', 0.0)
         frm = ctk.CTkFrame(t, fg_color=bg, corner_radius=10)
         frm.pack(fill="both", expand=True, padx=0, pady=0)
-        ctk.CTkLabel(frm, text=msg, font=ctk.CTkFont(*FONT_BODY),
+        ctk.CTkLabel(frm, text=msg, font=ctk_font(*FONT_BODY),
                      text_color="white", wraplength=320).pack(padx=PAD_MD, pady=PAD_SM)
         t.update_idletasks()
-        w = t.winfo_reqwidth() + 24
-        h = t.winfo_reqheight()
-        sw, sh = t.winfo_screenwidth(), t.winfo_screenheight()
-        t.geometry(f"{w}x{h}+{(sw - w) // 2}+{sh - h - 60}")
+        sc = t._get_window_scaling()
+        self._center_dialog(t, round(t.winfo_reqwidth() / sc) + 24, round(t.winfo_reqheight() / sc), where="bottom")
+        t.attributes('-alpha', 0.92)
         t.after(duration, t.destroy)
 
     def _show_export_success(self, title, msg, path):
         """Dialog xuất thành công với nút Mở file và Đóng."""
         dlg = ctk.CTkToplevel(self)
+        dlg.attributes('-alpha', 0.0)   # ẩn tới khi _center_dialog đặt xong vị trí
         dlg.title(title)
         dlg.resizable(False, False)
         dlg.transient(self)
@@ -10216,12 +10740,12 @@ class BOMToolApp(ctk.CTk):
         icon_frm = ctk.CTkFrame(dlg, fg_color='#4A9ECC', corner_radius=22, width=44, height=44)
         icon_frm.pack(pady=(22, 0))
         icon_frm.pack_propagate(False)
-        ctk.CTkLabel(icon_frm, text='✓', font=ctk.CTkFont(*FONT_TITLE),
+        ctk.CTkLabel(icon_frm, text='✓', font=ctk_font(*FONT_TITLE),
                      text_color="white").place(relx=.5, rely=.5, anchor="center")
         ctk.CTkLabel(dlg, text=title,
-                     font=ctk.CTkFont(*FONT_LABEL)).pack(pady=(10, 2), padx=24)
+                     font=ctk_font(*FONT_LABEL)).pack(pady=(10, 2), padx=24)
         ctk.CTkLabel(dlg, text=msg,
-                     font=ctk.CTkFont(*FONT_BODY),
+                     font=ctk_font(*FONT_BODY),
                      wraplength=340, justify="center").pack(pady=(0, 16), padx=24)
         btn_frm = ctk.CTkFrame(dlg, fg_color="transparent")
         btn_frm.pack(pady=(0, 20))
@@ -10237,9 +10761,7 @@ class BOMToolApp(ctk.CTk):
         dlg.bind("<Return>", lambda e: dlg.destroy())
         dlg.bind("<Escape>", lambda e: dlg.destroy())
         dlg.update_idletasks()
-        w, h = 400, dlg.winfo_reqheight() + 20
-        sw, sh = dlg.winfo_screenwidth(), dlg.winfo_screenheight()
-        dlg.geometry(f"{w}x{h}+{(sw-w)//2}+{(sh-h)//2}")
+        self._center_dialog(dlg, 400, round(dlg.winfo_reqheight() / dlg._get_window_scaling()) + 20)
         dlg.focus_set()
         dlg.wait_window()
 
@@ -10247,6 +10769,7 @@ class BOMToolApp(ctk.CTk):
         """Custom CTk yes/no dialog. Trả về True nếu Yes."""
         _result = [False]
         dlg = ctk.CTkToplevel(self)
+        dlg.attributes('-alpha', 0.0)   # ẩn tới khi _center_dialog đặt xong vị trí
         dlg.title(title)
         dlg.resizable(False, False)
         dlg.transient(self)
@@ -10256,12 +10779,12 @@ class BOMToolApp(ctk.CTk):
         icon_frm = ctk.CTkFrame(dlg, fg_color='#4A9ECC', corner_radius=22, width=44, height=44)
         icon_frm.pack(pady=(22, 0))
         icon_frm.pack_propagate(False)
-        ctk.CTkLabel(icon_frm, text='?', font=ctk.CTkFont(*FONT_TITLE),
+        ctk.CTkLabel(icon_frm, text='?', font=ctk_font(*FONT_TITLE),
                      text_color="white").place(relx=.5, rely=.5, anchor="center")
         ctk.CTkLabel(dlg, text=title,
-                     font=ctk.CTkFont(*FONT_LABEL)).pack(pady=(10, 2), padx=24)
+                     font=ctk_font(*FONT_LABEL)).pack(pady=(10, 2), padx=24)
         ctk.CTkLabel(dlg, text=msg,
-                     font=ctk.CTkFont(*FONT_BODY),
+                     font=ctk_font(*FONT_BODY),
                      wraplength=320, justify="center").pack(pady=(0, 16), padx=24)
         btn_frm = ctk.CTkFrame(dlg, fg_color="transparent")
         btn_frm.pack(pady=(0, 20))
@@ -10274,21 +10797,20 @@ class BOMToolApp(ctk.CTk):
         dlg.bind("<Return>", lambda e: _yes())
         dlg.bind("<Escape>", lambda e: dlg.destroy())
         dlg.update_idletasks()
-        w, h = 380, dlg.winfo_reqheight() + 20
-        sw, sh = dlg.winfo_screenwidth(), dlg.winfo_screenheight()
-        dlg.geometry(f"{w}x{h}+{(sw-w)//2}+{(sh-h)//2}")
+        self._center_dialog(dlg, 380, round(dlg.winfo_reqheight() / dlg._get_window_scaling()) + 20)
         dlg.focus_set()
         dlg.wait_window()
         return _result[0]
 
     def _make_loading_popup(self, msg="Đang import dữ liệu vào BRAVO...\nVui lòng không đóng cửa sổ.", grab=True):
         dlg = ctk.CTkToplevel(self)
+        dlg.attributes('-alpha', 0.0)   # ẩn tới khi _center_dialog đặt xong vị trí
         dlg.title("Đang xử lý")
         dlg.resizable(False, False)
         dlg.transient(self)
         dlg.protocol("WM_DELETE_WINDOW", lambda: None)   # chặn đóng cửa sổ
         lbl = ctk.CTkLabel(dlg, text=msg,
-                     font=ctk.CTkFont(*FONT_MD),
+                     font=ctk_font(*FONT_MD),
                      wraplength=300, justify="center")
         lbl.pack(pady=(22, 10), padx=PAD_LG)
         self._loading_lbl = lbl   # giữ ref để update từ background thread
@@ -10296,14 +10818,8 @@ class BOMToolApp(ctk.CTk):
         pb.pack(padx=PAD_LG, pady=(0, 22))
         pb.start()
         self._loading_pb = pb     # U8: ref cho determinate mode khi biết _total_all
-        # Canh giữa màn hình
-        dlg.update_idletasks()
-        w, h = 340, 160
-        sw = dlg.winfo_screenwidth()
-        sh = dlg.winfo_screenheight()
-        x  = (sw - w) // 2
-        y  = (sh - h) // 2
-        dlg.geometry(f"{w}x{h}+{x}+{y}")
+        # Canh giữa cửa sổ chính
+        self._center_dialog(dlg, 340, 160)
         if grab:
             dlg.grab_set()
         else:
@@ -10354,6 +10870,9 @@ class BOMToolApp(ctk.CTk):
         # U10: re-entrancy guard — chặn double-click khi import đang chạy
         if getattr(self, '_import_running', False):
             return
+        if self._bom_dirty:
+            self._show_msg("Đã sửa dữ liệu", "Bấm Kiểm tra lại trước khi Import.", 'warning')
+            return
         self._import_running = True
         self.btn_import.configure(state="disabled")
         self.btn_view_sql.configure(state="disabled")
@@ -10364,23 +10883,23 @@ class BOMToolApp(ctk.CTk):
 
         # ── 1. Pre-checks ────────────────────────────────────────────────────
         if self.val_errors is None:
-            self._show_msg("Chưa Validate", "Hãy bấm Validate trước khi Import.", 'warning')
+            self._show_msg("Chưa kiểm tra", "Bấm Kiểm tra trước khi Import.", 'warning')
             return
         header_errors = any(
             r.get("severity") == "error"
-            for r in self.val_errors.get("[H] Phiếu Header", [])
+            for r in self.val_errors.get("[H] Đầu phiếu", [])
         )
         if header_errors:
             self._show_msg(
-                "Lỗi HEADER",
-                "Dữ liệu Header còn lỗi. Kiểm tra lại trước khi Import."
+                "Đầu phiếu còn lỗi",
+                "Sửa lỗi đầu phiếu rồi bấm Kiểm tra lại."
             , 'error')
             return
         if not self._current_creator_user_id:
             self.cmb_creator.set_error(True)
             self._show_msg(
-                "Chưa chọn Nhân viên",
-                "Vui lòng chọn Nhân viên trước khi Import.",
+                "Thiếu thông tin",
+                "Chưa chọn Nhân viên.",
                 'warning')
             self._import_running = False
             self.btn_import.configure(state="normal")
@@ -10389,8 +10908,8 @@ class BOMToolApp(ctk.CTk):
         if not self._bom_selected_order_id:
             self.cmb_order.set_error(True)
             self._show_msg(
-                "Chưa chọn Đơn hàng",
-                "Vui lòng chọn Đơn hàng trước khi Import.",
+                "Thiếu thông tin",
+                "Chưa chọn Đơn hàng.",
                 'warning')
             self._import_running = False
             self.btn_import.configure(state="normal")
@@ -10405,7 +10924,7 @@ class BOMToolApp(ctk.CTk):
         except ConnectionError as e:
             self._set_status("❌  Kết nối thất bại", C["red"])
             self._log(fname, "Import", 0, "Lỗi kết nối", str(e), "error")
-            self._show_msg("Lỗi kết nối DB", str(e))
+            self._show_msg("Lỗi kết nối DB", f"Không kết nối được DB. Kiểm tra mạng/VPN.\n{e}")
             return
         except Exception as e:
             self._set_status("❌  Lỗi DB", C["red"])
@@ -10470,14 +10989,31 @@ class BOMToolApp(ctk.CTk):
                     self._ps_bom_caches[_sec] = _dcaches
                     _stt_col = next((c for c in _df.columns if _norm_vn(str(c)) == 'stt'), None)
                     _PLACEHOLDER_VALS_PS = {'_', '--', '-', 'x', 'n/a'}
+                    _ps_groups = build_group_table(self.mapping, _norm_vn)
+                    _ps_cur_group = None
+                    _ps_vt_col  = find_col(_df.columns, _norm_vn, 'Tên vật tư')
+                    _ps_dvt_col = find_col(_df.columns, _norm_vn, 'Đvt')
                     _order = 0
-                    for _, _drow in _df.iterrows():
+                    for _rowno, (_, _drow) in enumerate(_df.iterrows(), 1):
                         if _drow.isna().all():
                             continue
                         _stt_v = str(_drow.get(_stt_col, '') or '').strip() if _stt_col else ''
+                        if _stt_v in ('nan', 'None'):   # ô trống (NaN/None) — không phải STT chữ
+                            _stt_v = ''
                         if _stt_v and SECTION_STT_PATTERN.match(_stt_v):
+                            if _ps_groups.get(_sec):
+                                _g = resolve_group(_sec, _drow.values, _ps_groups, _norm_vn)
+                                if _g is not None:
+                                    _ps_cur_group = _g
                             continue
                         _order += 1
+                        # Dòng BTP (BOM2: Tên vật tư trống/'+' và Đvt CỤM) không tra theo Tên vật tư
+                        _row_btp = bool(
+                            NUMERIC_STT_PATTERN.match(_stt_v)
+                            and row_is_btp(_sec,
+                                           _drow.get(_ps_vt_col) if _ps_vt_col is not None else None,
+                                           _drow.get(_ps_dvt_col) if _ps_dvt_col is not None else None,
+                                           _norm_vn))
                         for _rec in _fuzzy_recs:
                             _ten    = _nan_str(_rec.get('ten_excel', ''))
                             _kl     = _nan_str(_rec.get('kieu_lookup', ''))
@@ -10523,8 +11059,8 @@ class BOMToolApp(ctk.CTk):
                                             break
                             if _raw is None:
                                 continue
-                            if _kl == 'nvl_or_btp' and str(_raw).strip() in _PLACEHOLDER_VALS_PS:
-                                continue   # rỗng/placeholder → BTP hoặc bỏ qua, không fuzzy_name
+                            if _kl == 'nvl_or_btp' and (_row_btp or str(_raw).strip() in _PLACEHOLDER_VALS_PS):
+                                continue   # dòng BTP / rỗng / placeholder → không fuzzy_name
                             _cache_key = (_bm, _dk, _ss, _lv)
                             _cache = _dcaches.get(_cache_key, [])
                             self._fuzzy_ctx = {
@@ -10532,9 +11068,16 @@ class BOMToolApp(ctk.CTk):
                             # nvl_or_btp: bản thân _lookup_generic không hiểu kiểu
                             # này, engine thật luôn tra theo 'fuzzy_name' cho phần
                             # Tên vật tư — dùng đúng loại đó khi pre-collect.
-                            self._lookup_generic(
+                            _lk_res, _lk_type = self._lookup_generic(
                                 _raw, _cache, 'fuzzy_name' if _kl == 'nvl_or_btp' else _kl,
                                 _nguong, _cache_key=_cache_key)
+                            if (_lk_res is None and _lk_type == 'none' and _ps_cur_group
+                                    and _ps_cur_group.get('cach_xu_ly') == HOW_MKT
+                                    and hasattr(self, '_mkt_use')):
+                                # Không tra được mã theo Tên vật tư → khi Import sẽ dùng mã tạm của nhóm
+                                self._mkt_use[(_sec, _rowno)] = (
+                                    _ps_cur_group.get('ten_nhom', ''), _ps_cur_group.get('ma_tam', ''),
+                                    _ps_vt_col)
             except Exception as _pe:
                 import traceback as _tb
                 _err_msg = _tb.format_exc()
@@ -10736,8 +11279,7 @@ class BOMToolApp(ctk.CTk):
                 self._log('', 'prescan', 0, 'Error', result['error'], 'error')
                 self._show_msg(
                     "Lỗi chuẩn bị dữ liệu",
-                    "Đã xảy ra lỗi khi đọc dữ liệu từ file Excel.\n"
-                    "Chi tiết kỹ thuật đã được ghi vào log panel phía dưới.",
+                    f"Không đọc được dữ liệu file.\n{str(result['error'])[:300]}",
                     'error')
                 return
 
@@ -10752,8 +11294,7 @@ class BOMToolApp(ctk.CTk):
             # Hiển thị lỗi SP (cảnh báo, không dừng)
             for _sc, _es in result.get('sp_errors', []):
                 self._log(fname, f'SP {_sc}', 0, 'Error', _es, 'error')
-                self._show_msg(f'SP Error — {_sc}',
-                               f'Lỗi khi gọi SP cho [{_sc}]:\n{_es}', 'warning')
+                self._show_msg('Lỗi tạo mã', f'{_sc}: {_es}', 'warning')
 
             # Ghi log exception của từng validator SQL
             for _vn, _ve in result.get('validator_warns', []):
@@ -10767,10 +11308,8 @@ class BOMToolApp(ctk.CTk):
                     for r in _null_req
                 )
                 _go = self._ask_msg(
-                    "Thiếu dữ liệu bắt buộc",
-                    f"Các trường sau bắt buộc nhưng không lấy được giá trị "
-                    f"(lookup thất bại hoặc để trống):\n\n{_names}\n\n"
-                    f"Tiếp tục import với các trường này để NULL không?")
+                    "Thiếu dữ liệu",
+                    f"Chưa có giá trị: {_names}.\nVẫn import (để trống)?")
                 if not _go:
                     _abort()
                     return
@@ -10782,9 +11321,8 @@ class BOMToolApp(ctk.CTk):
                     f"• {_m}" for _n, _m in _violations
                 )
                 if not self._ask_msg(
-                    f"Cảnh báo trước khi Import ({len(_violations)} mục)",
-                    f"Phát hiện {len(_violations)} cảnh báo:\n\n{_vio_text}"
-                    f"\n\nVẫn tiếp tục import không?"
+                    f"Cảnh báo ({len(_violations)})",
+                    f"{_vio_text}\n\nVẫn import?"
                 ):
                     _abort()
                     return
@@ -10909,20 +11447,20 @@ class BOMToolApp(ctk.CTk):
         if result.get('ok'):
             new_id = result['new_id']
             n_det  = result['detail_count']
-            self._set_status(f"\u2705  Import thành công — BOM ID {new_id}, {n_det} dòng chi tiết", C["green"])
+            self._set_status(f"\u2705  Import xong — BOM ID {new_id} · {n_det} dòng", C["green"])
             self._log(fname, "Import", str(n_det), "OK", f"BOM ID={new_id}, {n_det} dòng chi tiết", "ok")
             self._db_log('BOM', fname, new_id, n_det, 'OK',
                          f"BOM ID={new_id}, {n_det} dòng chi tiết")
             self._last_import_bom_id = new_id
             self._last_import_fname  = fname
             self.btn_undo_import.configure(state="normal")
-            self._show_msg("Import thành công", f"BOM đã được tạo thành công!\nBOM ID: {new_id}\nSố dòng chi tiết: {n_det:,}", kind="info")
+            self._show_msg("Import xong", f"BOM ID {new_id} · {n_det:,} dòng.", kind="info")
         else:
             err = result.get('error', 'Unknown error')
             self._set_status("\u274c  Import thất bại", C["red"])
             self._log(fname, "Import", "0", "Lỗi", err, "error")
             self._db_log('BOM', fname, '', 0, 'LOI', err)
-            self._show_msg("Import thất bại", f"Lỗi: {err}", kind="error")
+            self._show_msg("Import thất bại", f"{err}", kind="error")
 
 
     # ── Xem SQL trước khi import ─────────────────────────────────────────────
@@ -11022,13 +11560,13 @@ class BOMToolApp(ctk.CTk):
                 self._set_status(f"Đã lưu SQL → {path}", C["green"])
 
         btn_copy = CButton(tb, text="📋  Copy SQL", command=_copy,
-            font=ctk.CTkFont(*FONT_BODY), fg_color="transparent",
+            font=ctk_font(*FONT_BODY), fg_color="transparent",
             text_color=("#E1E1E1","#E1E1E1"), hover_color=("#3A3A3A","#3A3A3A"),
             border_width=0, corner_radius=4, height=28, width=110)
         btn_copy.pack(side=tk.LEFT, padx=6, pady=4)
 
         btn_save = CButton(tb, text="💾  Lưu .sql", command=_save,
-            font=ctk.CTkFont(*FONT_BODY), fg_color="transparent",
+            font=ctk_font(*FONT_BODY), fg_color="transparent",
             text_color=("#E1E1E1","#E1E1E1"), hover_color=("#3A3A3A","#3A3A3A"),
             border_width=0, corner_radius=4, height=28, width=100)
         btn_save.pack(side=tk.LEFT, padx=(0,6), pady=4)
@@ -11036,7 +11574,7 @@ class BOMToolApp(ctk.CTk):
         n_lines = full_sql.count('\n')
         tk.Label(tb, text=f"{n_lines:,} dòng SQL",
             bg="#1E1E1E", fg="#888888",
-            font=("Consolas", 9)).pack(side=tk.RIGHT, padx=10)
+            font=("Consolas", 10)).pack(side=tk.RIGHT, padx=10)
 
         # Text area
         frame = tk.Frame(dlg)
@@ -11064,11 +11602,8 @@ class BOMToolApp(ctk.CTk):
         bom_id = self._last_import_bom_id
         if bom_id is None:
             return
-        if not self._ask_msg("Hoàn tác import",
-                f"Xóa BOM vừa import khỏi BRAVO?\n\n"
-                f"BOM ID: {bom_id}\n"
-                f"File: {self._last_import_fname}\n\n"
-                f"Thao tác này KHÔNG thể tự hoàn tác lại."):
+        if not self._ask_msg("Hoàn tác",
+                f"Xóa BOM {bom_id} khỏi Bravo?\nKhông khôi phục được."):
             return
         self.btn_undo_import.configure(state="disabled", text="⏳  Đang xóa...")
         threading.Thread(target=self._undo_worker, args=(bom_id,),
@@ -11104,25 +11639,20 @@ class BOMToolApp(ctk.CTk):
             self.btn_undo_import.configure(state="normal")
             if 'Could not find stored procedure' in error \
                     or 'usp_BOMTool_DeleteBOM' in error:
-                self._show_msg("Chưa có SP trên DB",
-                    "Stored procedure usp_BOMTool_DeleteBOM chưa được tạo "
-                    "trên database.\n\n"
-                    "Gửi file sql\\create_usp_bomtool_deletebom.sql cho khách hàng "
-                    "chạy, sau đó bấm lại nút này.", kind="info")
+                self._show_msg("Chưa hỗ trợ",
+                    "Chưa cài chức năng hoàn tác. Liên hệ quản trị.", kind="info")
             else:
                 self._show_msg("Lỗi hoàn tác", error, kind="error")
             return
         self._last_import_bom_id = None
         self.btn_undo_import.configure(state="disabled")
-        self._set_status(f"↩  Đã xóa BOM ID {bom_id} ({n_det} dòng chi tiết)",
+        self._set_status(f"↩  Đã xóa BOM {bom_id} ({n_det} dòng)",
                          C["green"])
         self._log(self._last_import_fname, "Undo", str(n_det), "OK",
                   f"Đã xóa BOM ID={bom_id}", "warn")
         self._db_log('UNDO', self._last_import_fname, bom_id, n_det, 'OK',
                      f"Đã xóa BOM ID={bom_id} ({n_det} dòng chi tiết)")
-        self._show_msg("Đã hoàn tác",
-            f"BOM ID {bom_id} và {n_det:,} dòng detail đã được xóa khỏi BRAVO.",
-            kind="info")
+        self._show_msg("Đã hoàn tác", f"Đã xóa BOM {bom_id} ({n_det:,} dòng).", kind="info")
 
 
 if __name__ == "__main__":

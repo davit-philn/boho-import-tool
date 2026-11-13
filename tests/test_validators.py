@@ -35,32 +35,32 @@ class TestValidateLayer1Header:
     def test_all_required_fields_present_no_errors(self):
         meta = {"Mã sản phẩm": "SP001", "Dự án": "DA001", "Đơn hàng": "DH001"}
         result = validate_layer1({}, meta)
-        assert result["[H] Phiếu Header"] == []
+        assert result["[H] Đầu phiếu"] == []
 
     def test_missing_one_field_generates_error(self):
         meta = {"Mã sản phẩm": "", "Dự án": "DA001", "Đơn hàng": "DH001"}
         result = validate_layer1({}, meta)
-        h_errors = result["[H] Phiếu Header"]
+        h_errors = result["[H] Đầu phiếu"]
         assert any(e["col"] == "Mã sản phẩm" and e["severity"] == "error"
                    for e in h_errors)
 
     def test_all_required_fields_missing_three_errors(self):
         result = validate_layer1({}, {})
-        h_errors = result["[H] Phiếu Header"]
+        h_errors = result["[H] Đầu phiếu"]
         assert len(h_errors) == 3
 
     def test_none_value_passes_as_str_none(self):
         # str(None) = "None" → validator coi là có giá trị; đây là behavior hiện tại
         meta = {"Mã sản phẩm": None, "Dự án": "DA001", "Đơn hàng": "DH001"}
         result = validate_layer1({}, meta)
-        h_errors = result["[H] Phiếu Header"]
+        h_errors = result["[H] Đầu phiếu"]
         # None không bị báo lỗi vì str(None) = "None" (truthy)
         assert not any(e["col"] == "Mã sản phẩm" for e in h_errors)
 
     def test_whitespace_only_treated_as_missing(self):
         meta = {"Mã sản phẩm": "   ", "Dự án": "DA001", "Đơn hàng": "DH001"}
         result = validate_layer1({}, meta)
-        h_errors = result["[H] Phiếu Header"]
+        h_errors = result["[H] Đầu phiếu"]
         assert any(e["col"] == "Mã sản phẩm" for e in h_errors)
 
 
