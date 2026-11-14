@@ -29,7 +29,7 @@ import json
 _log = logging.getLogger(__name__)
 
 from services.utils import (
-    APP_VERSION, TAB_IMPORT, TAB_THDM, TAB_CATALOG,
+    APP_VERSION, TAB_IMPORT, TAB_THDM, TAB_CATALOG, TAB_HISTORY,
     BASE_DIR, CONFIG_DIR, MAPPING_FILE, DB_CONFIG_FILE, SETTINGS_FILE,
     DEFAULT_CREATOR_USER_ID, C, THEMES,
     _norm_vn, _nan_str, _MAPPING_ENG_COLS, _SECTION_ENG_COLS,
@@ -59,6 +59,7 @@ from services.bom_parser import (
     _resolve_formula, _is_data_row,
     _is_encrypted_excel, _decrypt_excel, _ask_excel_password,
 )
+from services import thdm_coverage
 from services.bom_rules import (
     sp_expects_code, find_missing_sp_codes, row_is_btp, row_is_bb, find_col)
 from services.bom_groups import (
@@ -78,6 +79,8 @@ from views.widgets import (
 # Mã B20Item dạng chuẩn (vd NVL10-000003) — dùng để tie-break khi 1 tên trùng
 # nhiều mã (vd mã legacy chứa '#'). Xem _lookup_generic._resolve_dup().
 _NVL_CODE_RE = re.compile(r'^NVL\d+-\d+$', re.IGNORECASE)
+
+
 
 
 class BOMToolApp(ctk.CTk):
@@ -113,6 +116,7 @@ class BOMToolApp(ctk.CTk):
         self._skipped_sheets = []
         self._current_creator_user_id = None   # UserId (B00UserList.Id) được chọn ở tab BOM
         self._current_creator_employee_id = None  # EmployeeId (B20Employee.Id) riêng, KHÔNG qua fallback UserId
+        self._current_creator_display = None      # nhãn 'Mã | Tên' nhân viên đã chọn (ghi vào log lịch sử)
         self._thdm_creator_user_id    = None   # UserId riêng cho tab THDM
         self._thdm_creator_employee_id = None  # EmployeeId (B20Employee.Id) riêng cho tab THDM
 
@@ -435,14 +439,10 @@ class BOMToolApp(ctk.CTk):
                 background=t.get("cell_warn_bg"), foreground=t.get("cell_warn_fg"))
             obj.rehighlight()
 
-        for _attr in ("tree", "map_tree", "log_tree", "thdm_raw_tree", "_thdm_header_tree",
-                      "catalog_import_sheet"):
+        for _attr in ("tree", "map_tree", "log_tree", "_thdm_tree", "_hist_tree", "catalog_import_sheet"):
             _obj = getattr(self, _attr, None)
             if isinstance(_obj, SheetTable):
                 _update_sheet_tags(_obj)
-        for _tr in getattr(self, "_thdm_sec_trees", {}).values():
-            if isinstance(_tr, SheetTable):
-                _update_sheet_tags(_tr)
 
         # 4. thdm_bom_sheet (raw tksheet.Sheet)
         _sh = getattr(self, "thdm_bom_sheet", None)
@@ -537,17 +537,18 @@ class BOMToolApp(ctk.CTk):
         self._recolor_tk_widgets(self, _color_map, _fg_map)
 
         # Cập nhật fg/selectbackground của Listbox (color_map chỉ đổi bg)
-        _listbox = getattr(self, "listbox", None)
-        if _listbox:
-            try:
-                _listbox.configure(
-                    fg=t["tv_text"],
-                    selectbackground=t["tv_sel"],
-                    selectforeground=t["tv_text"],
-                    highlightbackground=t["border"],
-                )
-            except Exception:
-                pass
+        for _lb_name in ("listbox", "err_listbox", "thdm_listbox", "thdm_err_listbox"):
+            _listbox = getattr(self, _lb_name, None)
+            if _listbox:
+                try:
+                    _listbox.configure(
+                        fg=t["tv_text"],
+                        selectbackground=t["tv_sel"],
+                        selectforeground=t["tv_text"],
+                        highlightbackground=t["border"],
+                    )
+                except Exception:
+                    pass
 
         # Cập nhật fg của warning panel labels (đảm bảo đọc được trong Light mode)
         _warn_fg  = "#DC2626" if _is_light else "#CC8888"
@@ -578,6 +579,8 @@ class BOMToolApp(ctk.CTk):
         try:
             self.catalog_tree.tag_configure("leaf",
                 foreground=t["cat_leaf"])
+            self.catalog_tree.tag_configure("group",
+                foreground=t["cat_group"], font=FONT_SMALL_B)
             self.catalog_tree.tag_configure("group_inactive",
                 foreground=t["cat_inactive"],
                 font=FONT_SMALL_I)
@@ -635,7 +638,12 @@ class BOMToolApp(ctk.CTk):
 
         if hasattr(self, "err_listbox"):
             self._refresh_error_list()   # màu chữ từng mục lỗi theo theme mới
+        if hasattr(self, "_thdm_tree"):
+            self._thdm_refresh_view()
+        if hasattr(self, "_hist_tree"):
+            self._hist_refresh_theme()
         self._refresh_theme_btn()
+        self._enforce_compact_chrome()
 
         # 9. Lưu settings
         self._save_settings()
@@ -757,6 +765,12 @@ class BOMToolApp(ctk.CTk):
 
         self.after(10, _place_and_show)
 
+    def _tighten_tabstrip(self):
+        """Dải tab sát thanh tiêu đề, canh trái (CTkTabview mặc định chừa khoảng trống lớn phía trên)."""
+        self.nb._outer_spacing = 0
+        self.nb._configure_grid()
+        self.nb._segmented_button.grid_configure(sticky="w", padx=PAD_MD, pady=(4, 0))
+
     def change_scaling_event(self, value: str):
         try:
             scale = int(value.replace("%", "")) / 100
@@ -764,10 +778,11 @@ class BOMToolApp(ctk.CTk):
         except Exception:
             pass
         self._current_scaling_pct = value
+        self._enforce_compact_chrome()
         # ctk.set_widget_scaling() → CTkTabview._set_scaling() → _configure_grid()
         # tự reset thanh tab về sticky="ns" (căn giữa) — áp lại canh trái.
         try:
-            self.nb._segmented_button.grid_configure(sticky="w", padx=PAD_SM, pady=(4, 0))
+            self._tighten_tabstrip()
         except Exception:
             pass
         self._save_settings()
@@ -926,6 +941,7 @@ class BOMToolApp(ctk.CTk):
             self._startup_overlay.destroy()
         except Exception:
             pass
+        self._enforce_compact_chrome()
         # Auto-load Người lập + Dự án THDM — cố ý đợi tới khi overlay kiểm
         # tra kết nối khởi động đã có kết quả (thành công hoặc user bấm Bỏ
         # qua), thay vì bắn theo timer cố định 600ms/800ms độc lập với kết
@@ -936,13 +952,15 @@ class BOMToolApp(ctk.CTk):
         if not getattr(self, '_auto_loaded_after_startup', False):
             self._auto_loaded_after_startup = True
             self.after(200, self._load_creator_combo)
-            self.after(400, self._thdm_load_products)
             self.after(600, self._load_bom_orders)
 
 
-    # Tạm ẩn tab THDM + Catalog (chỉ làm BOM). Chỉ ẩn hiển thị, vẫn build đầy đủ để code khác
-    # tham chiếu không lỗi — bật lại: False.
-    _HIDE_NON_BOM_TABS = True
+    # Tab hiển thị: BOM + THĐM. Catalog (tra cứu danh mục) tạm ẩn đến hạng mục 4 — vẫn build đầy đủ
+    # để code khác tham chiếu không lỗi.
+    _ENABLED_TABS = (TAB_IMPORT, TAB_THDM, TAB_CATALOG, TAB_HISTORY)
+    _COMPACT_CHROME = True    # gọn: ẩn thông tin DB / nút Mapping / Cài đặt / thanh log
+    # Hàng tên cột SQL dưới tiêu đề bảng THĐM — thông tin kỹ thuật, ẩn mặc định (như bảng BOM).
+    _THDM_SQL_ROW = False
     # Hàng tên cột SQL (ItemName, Quantity…) dưới tiêu đề bảng BOM — thông tin kỹ thuật, ẩn mặc định.
     _SHOW_SQL_ROW = False
     _bom_row_off = 0          # số hàng phụ phía trên dữ liệu trong lưới (1 khi hiện hàng SQL)
@@ -1055,16 +1073,18 @@ class BOMToolApp(ctk.CTk):
         self.nb.add(TAB_IMPORT)
         self.nb.add(TAB_THDM)
         self.nb.add(TAB_CATALOG)
+        self.nb.add(TAB_HISTORY)
         try:
             self.nb._segmented_button.configure(
                 font=ctk_font(*FONT_MD_B), height=38)
-            self.nb._segmented_button.grid_configure(sticky="w", padx=PAD_MD, pady=(6, 0))
+            self._tighten_tabstrip()
         except Exception:
             pass
 
         self._build_tab_import()
         self._build_tab_catalog()
         self._build_tab_thdm()
+        self._build_tab_history()
         self._build_log_panel()
 
         # Auto-load Người lập + Dự án THDM giờ được kích từ
@@ -1073,30 +1093,41 @@ class BOMToolApp(ctk.CTk):
         # Reload khi user switch sang tab THDM (bắt sự kiện tab change)
         self.nb.configure(command=self._on_tab_changed)
 
-        if self._HIDE_NON_BOM_TABS:
+        if self._COMPACT_CHROME:
             try:
-                # Chỉ còn 1 tab → bỏ hẳn dải tab (tiết kiệm 1 hàng chiều cao)
                 self.nb.set(TAB_IMPORT)
-                self.nb._outer_spacing = 0
-                self.nb._outer_button_overhang = 0
-                self.nb._button_height = 0
-                self.nb._configure_grid()
-                self.nb._segmented_button.grid_remove()
+                if len(self._ENABLED_TABS) == 1:
+                    # Chỉ còn 1 tab → bỏ hẳn dải tab (tiết kiệm 1 hàng chiều cao)
+                    self.nb._outer_spacing = 0
+                    self.nb._outer_button_overhang = 0
+                    self.nb._button_height = 0
+                    self.nb._configure_grid()
+                    self.nb._segmented_button.grid_remove()
+                else:
+                    # Giữ dải tab, chỉ ẩn nút của tab chưa dùng (Catalog)
+                    for _tn in (TAB_IMPORT, TAB_THDM, TAB_CATALOG, TAB_HISTORY):
+                        if _tn not in self._ENABLED_TABS:
+                            self.nb._segmented_button._buttons_dict[_tn].grid_remove()
             except Exception as _e:
                 logging.getLogger(__name__).warning("Không ẩn được tab: %s", _e)
 
-            # Tạm ẩn cho gọn: thông tin DB, nút Mapping, nút 🎨 Cài đặt, thanh log
-            # dưới cùng. Chỉ ẩn hiển thị — widget/logic vẫn còn (log vẫn ghi).
-            for _name in ("_lbl_db_info", "_btn_mapping", "_btn_settings"):
-                try:
-                    _w = getattr(self, _name)
-                    (_w.grid_remove if _w.winfo_manager() == "grid" else _w.pack_forget)()
-                except Exception as _e:
-                    logging.getLogger(__name__).warning("Không ẩn được %s: %s", _name, _e)
+            self._enforce_compact_chrome()
+
+    def _enforce_compact_chrome(self):
+        """Tạm ẩn cho gọn: thông tin DB, nút Mapping, nút Cài đặt, thanh 'Lịch sử Import' dưới cùng.
+        Chỉ ẩn hiển thị — widget/logic vẫn còn (log vẫn ghi). Gọi lại sau khi khởi động,
+        đổi theme/tỉ lệ để các thành phần này không hiện lại."""
+        if not self._COMPACT_CHROME:
+            return
+        for _name in ("_lbl_db_info", "_btn_mapping", "_btn_settings", "log_panel"):
             try:
-                self.log_panel.grid_remove()
+                _w = getattr(self, _name)
+                if _w.winfo_manager() == "grid":
+                    _w.grid_remove()
+                elif _w.winfo_manager() == "pack":
+                    _w.pack_forget()
             except Exception as _e:
-                logging.getLogger(__name__).warning("Không ẩn được log panel: %s", _e)
+                logging.getLogger(__name__).warning("Không ẩn được %s: %s", _name, _e)
 
     def _measure_toolbar(self):
         """Đo bề rộng thanh công cụ ở dạng đầy đủ (1 lần) để biết khi nào phải thu gọn."""
@@ -1260,7 +1291,7 @@ class BOMToolApp(ctk.CTk):
 
         # Sheet list
         sb_frame = tk.Frame(body, bg=dt["bg_deep"], width=270)
-        sb_frame.pack(side=tk.LEFT, fill=tk.Y)
+        sb_frame.pack(side=tk.LEFT, fill=tk.Y, pady=6)   # cùng lề trên/dưới với khung bảng bên phải
         sb_frame.pack_propagate(False)
 
         tk.Label(sb_frame, text="BẢNG DỮ LIỆU",
@@ -1324,8 +1355,8 @@ class BOMToolApp(ctk.CTk):
             text_color=("gray50","gray60"),
             fg_color="transparent", anchor="w")
         self.lbl_table.grid(row=0, column=0, sticky="ew", pady=(0, 2))
-        if self._HIDE_NON_BOM_TABS:
-            # Chỉ còn tab BOM → trạng thái nằm ngay trên bảng thay vì góc phải thanh trên cùng
+        if self._COMPACT_CHROME:
+            # Trạng thái nằm ngay trên bảng thay vì góc phải thanh trên cùng
             try:
                 self.lbl_status.destroy()
             except Exception:
@@ -1398,6 +1429,7 @@ class BOMToolApp(ctk.CTk):
             text_color=("#B45309", "#FBBF24"),
             fg_color="transparent", anchor="w")
         self.lbl_hint.grid(row=3, column=0, columnspan=2, sticky="ew", padx=10, pady=(2, 4))
+        self.lbl_hint.grid_remove()   # ẩn khi chưa có ghi chú — không để dải trống dưới bảng
 
         # Empty state overlay
         self._tf_outer = tk.Frame(right, bg=dt["bg_main"])
@@ -1801,6 +1833,19 @@ class BOMToolApp(ctk.CTk):
         self._setup_catalog_view_tab(self._catalog_subtabs.tab(_SUB_TAB_VIEW))
         self._setup_catalog_import_tab(self._catalog_subtabs.tab(_SUB_TAB_IMPORT))
         self._init_catalog_icons()
+        # Hợp đồng chỉ yêu cầu tra cứu + export → ẩn sub-tab Import (code giữ nguyên)
+        try:
+            self._catalog_subtabs.set(_SUB_TAB_VIEW)
+            _st = self._catalog_subtabs
+            _st._outer_spacing = 0
+            _st._outer_button_overhang = 0
+            _st._button_height = 0
+            _st._configure_grid()
+            _st._segmented_button.grid_remove()
+        except Exception as _e:
+            logging.getLogger(__name__).warning("Không ẩn được sub-tab Import: %s", _e)
+
+    _CATALOG_VISIBLE_COLS = ("Mã Vật Tư", "Tên Vật Tư", "ĐVT", "Quy Cách (mm)", "Chất Liệu", "Độ Dày")
 
     def _setup_catalog_view_tab(self, tab):
         """Sub-tab 1: Treeview xem danh mục + Export."""
@@ -1833,10 +1878,17 @@ class BOMToolApp(ctk.CTk):
 
         self.catalog_search_var = tk.StringVar()
         self.catalog_search_var.trace_add("write", lambda *_: self._catalog_filter())
-        ctk.CTkEntry(bar, textvariable=self.catalog_search_var,
-            font=ctk_font(*FONT_BODY),
-            placeholder_text="🔍  Tìm mã / tên...",
-            width=220, height=32, corner_radius=6).pack(side=tk.LEFT, pady=PAD_SM)
+        _ce = ctk.CTkEntry(bar, font=ctk_font(*FONT_BODY),
+            placeholder_text="Tìm theo mã hoặc tên vật tư",
+            width=260, height=32, corner_radius=6)
+        _ce.pack(side=tk.LEFT, pady=PAD_SM)
+        _ce.bind("<KeyRelease>", lambda _e: self.catalog_search_var.set(_ce.get()))
+        for _txt, _cmd in (("Mở hết", self._catalog_expand_all), ("Thu gọn", self._catalog_collapse_all)):
+            CButton(bar, text=_txt, command=_cmd, font=ctk_font(*FONT_BODY),
+                    fg_color="transparent", border_width=1,
+                    text_color=("#3B82F6","#60A5FA"), border_color=("#3B82F6","#60A5FA"),
+                    hover_color=("#DBEAFE","#1E3A5F"), height=32, width=84,
+                    corner_radius=6).pack(side=tk.LEFT, padx=(8, 0), pady=PAD_SM)
 
         self.lbl_catalog_status = CLabel(bar, text="—  Chưa tải",
             font=ctk_font(*FONT_BODY),
@@ -1893,7 +1945,7 @@ class BOMToolApp(ctk.CTk):
         self.catalog_tree.column("S.Mặt Phụ",      width=75,  anchor="center", stretch=False)
         self.catalog_tree.column("Lớp Phủ Phụ",    width=120, anchor="w",      stretch=False)
         self.catalog_tree.column("Độ Dày",         width=65,  anchor="center", stretch=False)
-        self.catalog_tree.tag_configure("group",          foreground=dt["log_ok"],       font=FONT_SMALL_B)
+        self.catalog_tree.tag_configure("group",          foreground=dt["cat_group"],    font=FONT_SMALL_B)
         self.catalog_tree.tag_configure("group_inactive", foreground=dt["cat_inactive"], font=FONT_SMALL_I)
         self.catalog_tree.tag_configure("leaf",           foreground=dt["cat_leaf"])
         self.catalog_tree.tag_configure("orphan_group",   foreground=dt["cat_orphan"],   font=FONT_SMALL_I)
@@ -1902,6 +1954,7 @@ class BOMToolApp(ctk.CTk):
             font=FONT_SMALL_I)
         self.catalog_tree.tag_configure("oddrow",  background=dt["bg_main"])
         self.catalog_tree.tag_configure("evenrow", background="#2A2D2E")
+        self.catalog_tree["displaycolumns"] = self._CATALOG_VISIBLE_COLS
         self.catalog_tree.grid(row=0, column=0, sticky="nsew")
         vsb.grid(row=0, column=1, sticky="ns")
         hsb.grid(row=1, column=0, sticky="ew")
@@ -2498,7 +2551,7 @@ class BOMToolApp(ctk.CTk):
             self.lbl_catalog_status.config(
                 text=(f"\U0001f4c2  {group_count} nhóm  \u2022  {n_leaves:,} vật tư" + grp_suffix),
                 fg=self._text_fg)
-            _n_cols    = len(getattr(self, '_catalog_current_col_defs', None) or []) or 3
+            _n_cols    = len(self._CATALOG_VISIBLE_COLS)
             _grp_label = f" [{grp_code}]" if grp_code else ""
             try:
                 self.lbl_catalog_table.config(
@@ -2561,6 +2614,39 @@ class BOMToolApp(ctk.CTk):
                 self.catalog_tree.insert(child_iid, "end",
                     iid=f"_ph_{child_iid}",
                     values=self._CATALOG_PH_VALS, tags=())
+
+    _CATALOG_EXPAND_LIMIT = 5000   # tránh treo UI khi mở cả danh mục ~90k dòng
+
+    def _catalog_collapse_all(self):
+        tree = self.catalog_tree
+        for iid in tree.get_children(""):
+            tree.item(iid, open=False)
+
+    def _catalog_expand_all(self):
+        """Mở các nhóm theo từng lớp (nạp lazy) cho tới khi chạm giới hạn số dòng."""
+        tree = self.catalog_tree
+        if getattr(self, '_catalog_mode', 'all') != 'all' or self.catalog_search_var.get().strip():
+            return
+        n_rows, truncated = 0, False
+        pending = list(tree.get_children(""))
+        while pending and not truncated:
+            nxt = []
+            for iid in pending:
+                kids = tree.get_children(iid)
+                if not kids:
+                    continue
+                if str(kids[0]).startswith("_ph_"):
+                    if n_rows >= self._CATALOG_EXPAND_LIMIT:
+                        truncated = True
+                        break
+                    tree.focus(iid)
+                    self._catalog_on_expand()
+                    n_rows += len(tree.get_children(iid))
+                tree.item(iid, open=True)
+                nxt.extend(k for k in tree.get_children(iid) if tree.get_children(k))
+            pending = nxt
+        if truncated:
+            self._toast("Danh mục lớn nên chỉ mở bớt — gõ vào ô tìm để thu hẹp", kind="info")
 
     def _catalog_export_excel(self):
         """Xuất toàn bộ danh mục ra file .xlsx."""
@@ -2990,6 +3076,7 @@ class BOMToolApp(ctk.CTk):
             "Độ Dày",
         )
         tree["columns"] = DEFAULT
+        tree["displaycolumns"] = self._CATALOG_VISIBLE_COLS
         tree.column("#0",            width=72,  minwidth=36, stretch=False)
         tree.heading("#0",           text="")
         for _c in DEFAULT:
@@ -4151,6 +4238,272 @@ class BOMToolApp(ctk.CTk):
         dlg.geometry(f"{w}x{h}+{(sw - w)//2}+{(sh - h)//2}")
         dlg.wait_window()
 
+    # ─ Tab 4: Lịch sử nhập liệu (đọc bảng log DB) ─────────────────────────────────────────────
+
+    _HIST_LIMIT = 1000
+    _HIST_ACTIONS = {"BOM": "Nhập BOM", "THDM": "Nhập THĐM (bản cũ)", "UNDO": "Hoàn tác BOM"}
+
+    def _build_tab_history(self):
+        tab = self.nb.tab(TAB_HISTORY)
+        dt = THEMES[ctk.get_appearance_mode()]
+        self._hist_rows, self._hist_shown = [], []
+        self._hist_busy = False
+        self._hist_themed = []          # (widget, kind) để tô lại khi đổi theme
+
+        bar = ctk.CTkFrame(tab, fg_color=("gray88", "gray16"), height=48, corner_radius=0)
+        bar.pack(fill=tk.X)
+        bar.pack_propagate(False)
+        ctk.CTkFrame(bar, fg_color="transparent", width=8).pack(side=tk.LEFT)
+        self.seg_hist = ctk.CTkSegmentedButton(
+            bar, values=["Tất cả", "Thành công", "Thất bại"], command=lambda _v: self._hist_apply(),
+            font=ctk_font(*FONT_BODY), height=32, text_color=("#1F2937", "#E5E7EB"),
+            unselected_color=("#D1D5DB", "#3A3A3A"), unselected_hover_color=("#C3C8D0", "#4A4A4A"))
+        self.seg_hist.set("Tất cả")
+        self.seg_hist.pack(side=tk.LEFT, padx=(0, 8), pady=PAD_SM)
+        self.cmb_hist_pc = ctk.CTkOptionMenu(bar, values=["Mọi máy"], width=170, height=32,
+            font=ctk_font(*FONT_BODY), dropdown_font=ctk_font(*FONT_BODY),
+            command=lambda _v: self._hist_apply())
+        self.cmb_hist_pc.pack(side=tk.LEFT, padx=(0, 8), pady=PAD_SM)
+        self.hist_search_var = tk.StringVar()
+        self.hist_search_var.trace_add("write", lambda *_: self._hist_apply())
+        _he = ctk.CTkEntry(bar, font=ctk_font(*FONT_BODY), placeholder_text="Tìm theo file hoặc nhân viên",
+                           width=250, height=32, corner_radius=6)
+        _he.pack(side=tk.LEFT, pady=PAD_SM)
+        _he.bind("<KeyRelease>", lambda _e: self.hist_search_var.set(_he.get()))
+        _g = dict(font=ctk_font(*FONT_BODY), fg_color="transparent", border_width=1,
+                  text_color=("#3B82F6", "#60A5FA"), border_color=("#3B82F6", "#60A5FA"),
+                  hover_color=("#DBEAFE", "#1E3A5F"), height=32, corner_radius=6)
+        self.btn_hist_refresh = CButton(bar, text="🔄  Làm mới", command=self._hist_load, **_g)
+        self.btn_hist_refresh.pack(side=tk.LEFT, padx=(12, 0), pady=PAD_SM)
+        self.btn_hist_export = CButton(bar, text="📤  Xuất Excel", command=self._hist_export,
+                                       state="disabled", **_g)
+        self.btn_hist_export.pack(side=tk.LEFT, padx=(8, 0), pady=PAD_SM)
+        self.lbl_hist_status = CLabel(bar, text="—  Chưa tải", font=ctk_font(*FONT_BODY),
+                                      text_color=("gray40", "gray55"), fg_color="transparent")
+        self.lbl_hist_status.pack(side=tk.RIGHT, padx=(0, 12))
+
+        body = tk.Frame(tab, bg=dt["bg_main"])
+        body.pack(fill=tk.BOTH, expand=True, padx=6, pady=6)
+        self._hist_themed.append((body, "main"))
+
+        kp = tk.Frame(body, bg=dt["bg_main"])
+        kp.pack(fill=tk.X, pady=(0, 8))
+        self._hist_themed.append((kp, "main"))
+        self._hist_kpi = {}
+        for i, (key, title) in enumerate((("total", "Lần chạy"), ("ok", "Thành công"),
+                                          ("err", "Thất bại"))):
+            card = tk.Frame(kp, bg=dt["bg_deep"])
+            card.grid(row=0, column=i, sticky="ew", padx=(0 if i == 0 else 8, 0))
+            kp.columnconfigure(i, weight=1, uniform="hk")
+            val = tk.Label(card, text="—", bg=dt["bg_deep"], fg=dt["text_main"], font=FONT_TITLE)
+            val.pack(anchor="w", padx=12, pady=(8, 0))
+            cap = tk.Label(card, text=title, bg=dt["bg_deep"], fg=dt["text_muted"], font=FONT_SMALL)
+            cap.pack(anchor="w", padx=12, pady=(0, 8))
+            self._hist_kpi[key] = val
+            self._hist_themed += [(card, "deep"), (val, "val"), (cap, "cap")]
+
+        # chi tiết bản ghi đang chọn (đặt dưới cùng, pack trước để luôn hiện)
+        det = tk.Frame(body, bg=dt["bg_deep"])
+        det.pack(side=tk.BOTTOM, fill=tk.X, pady=(8, 0))
+        self._hist_themed.append((det, "deep"))
+        self._hist_det = {}
+        for r, (key, title) in enumerate((("time", "Thời gian"), ("pc", "Máy / người dùng"),
+                                          ("creator", "Nhân viên lập"), ("file", "File"), ("act", "Loại"),
+                                          ("rows", "Dòng đọc được"), ("res", "Kết quả"))):
+            c = tk.Label(det, text=title, bg=dt["bg_deep"], fg=dt["text_muted"], font=FONT_SMALL,
+                         anchor="w")
+            c.grid(row=r, column=0, sticky="w", padx=(12, 12), pady=(6 if r == 0 else 0, 0))
+            v = tk.Label(det, text="—", bg=dt["bg_deep"], fg=dt["text_main"], font=FONT_BODY,
+                         anchor="w", justify="left", wraplength=1000)
+            v.grid(row=r, column=1, sticky="w", pady=(6 if r == 0 else 0, 0))
+            self._hist_det[key] = v
+            self._hist_themed += [(c, "cap"), (v, "val")]
+        det.columnconfigure(1, weight=1)
+        tk.Frame(det, bg=dt["bg_deep"], height=6).grid(row=7, column=0)
+
+        ca = tk.Frame(body, bg=dt["bg_main"])
+        ca.pack(fill=tk.BOTH, expand=True)
+        self._hist_themed.append((ca, "main"))
+        self._hist_cols = ("time", "pc", "user", "file", "rows", "status", "detail")
+        self._hist_tree = SheetTable(ca, columns=self._hist_cols)
+        self._hist_tree.pack(fill=tk.BOTH, expand=True)
+        for col, text, width, anchor, stretch in (
+                ("time", "Thời gian", 140, "w", False), ("pc", "Máy", 140, "w", False),
+                ("user", "Nhân viên", 200, "w", False), ("file", "Tên file Excel", 300, "w", False), ("rows", "Dòng đọc được", 135, "e", False),
+                ("status", "Trạng thái", 100, "w", False), ("detail", "Chi tiết", 520, "w", True)):
+            self._hist_tree.heading(col, text=text, anchor="center")
+            self._hist_tree.column(col, width=width, anchor=anchor, stretch=stretch, minwidth=60)
+        self._hist_tree.tag_configure("row_normal", foreground=dt["text_main"])
+        self._hist_tree.tag_configure("err_row", background=dt["badge_err_bg"],
+                                      foreground=dt["badge_err_fg"])
+        for _ev in ("<ButtonRelease-1>", "<KeyRelease-Up>", "<KeyRelease-Down>"):
+            self._hist_tree.sheet.MT.bind(_ev, lambda _e: self.after(30, self._hist_show_detail), add="+")
+
+    def _hist_refresh_theme(self):
+        dt = THEMES[ctk.get_appearance_mode()]
+        bg = {"main": dt["bg_main"], "deep": dt["bg_deep"]}
+        for w, kind in self._hist_themed:
+            try:
+                if kind in bg:
+                    w.configure(bg=bg[kind])
+                elif kind == "val":
+                    w.configure(bg=w.master.cget("bg"), fg=dt["text_main"])
+                else:
+                    w.configure(bg=w.master.cget("bg"), fg=dt["text_muted"])
+            except Exception:
+                pass
+        self._hist_show_detail()
+
+    def _hist_load(self):
+        if self._hist_busy:
+            return
+        self._hist_busy = True
+        self.lbl_hist_status.configure(text="⏳  Đang tải...")
+        self.btn_hist_refresh.configure(state="disabled")
+        threading.Thread(target=self._hist_load_worker, daemon=True).start()
+
+    def _hist_load_worker(self):
+        try:
+            conn = self._get_db_conn(timeout_sec=5)
+            cur = conn.cursor()
+            cur.execute(
+                f"SELECT TOP {int(self._HIST_LIMIT)} LogTime, Computer, LoginUser, Action, FileName, "
+                f"TotalRows, Status, Detail, AppVersion, Creator FROM {self.DB_LOG_TABLE} ORDER BY Id DESC")
+            rows = [dict(time=r[0], pc=r[1] or "", user=r[2] or "", action=r[3] or "",
+                         file=r[4] or "", rows=r[5], ok=(r[6] or "").strip().upper() == "OK",
+                         detail=r[7] or "", ver=r[8] or "", creator_raw=r[9] or "")
+                    for r in cur.fetchall()]
+            conn.close()
+            self.after(0, lambda: self._hist_load_done(rows, None))
+        except Exception as e:
+            self.after(0, lambda err=str(e): self._hist_load_done(None, err))
+
+    def _hist_load_done(self, rows, error):
+        self._hist_busy = False
+        self.btn_hist_refresh.configure(state="normal")
+        if error is not None:
+            missing = any(k in error for k in (self.DB_LOG_DATABASE, "Invalid object name",
+                                               "Cannot open database"))
+            self.lbl_hist_status.configure(
+                text="Chưa có bảng log trên DB" if missing else "Không tải được log (kiểm tra mạng/VPN)")
+            return
+        for r in rows:
+            r["creator"] = self._hist_creator_label(r.pop("creator_raw", ""))
+        self._hist_rows = rows
+        pcs = sorted({r["pc"] for r in rows if r["pc"]})
+        cur = self.cmb_hist_pc.get()
+        self.cmb_hist_pc.configure(values=["Mọi máy"] + pcs)
+        self.cmb_hist_pc.set(cur if cur in pcs else "Mọi máy")
+        self._hist_apply()
+
+    def _hist_creator_label(self, raw):
+        """Tên nhân viên lập: bản ghi mới 'UserId :: Mã | Tên'; bản ghi cũ chỉ có UserId → tra bản đồ nhân viên."""
+        raw = (raw or "").strip()
+        if not raw:
+            return "—"
+        if " :: " in raw:
+            return raw.split(" :: ", 1)[1].strip() or "—"
+        try:
+            uid = int(raw)
+        except ValueError:
+            return raw
+        if uid == DEFAULT_CREATOR_USER_ID:
+            return "Chưa ghi tên (log cũ)"
+        for disp, u in getattr(self, "_creator_map", {}).items():
+            if u == uid:
+                return re.sub(r"\s*\|\s*", " | ", disp)
+        return f"UserId {uid}"
+
+    def _hist_apply(self):
+        flt = self.seg_hist.get()
+        pc = self.cmb_hist_pc.get()
+        q = _norm_vn(self.hist_search_var.get())
+        shown = [r for r in self._hist_rows
+                 if (flt == "Tất cả" or r["ok"] == (flt == "Thành công"))
+                 and (pc == "Mọi máy" or r["pc"] == pc)
+                 and (not q or q in _norm_vn(r["file"]) or q in _norm_vn(r["creator"]))]
+        self._hist_shown = shown
+        tr = self._hist_tree
+        ch = tr.get_children()
+        if ch:
+            tr.delete(*ch)
+        for r in shown:
+            tr.insert("", "end", values=(
+                r["time"].strftime("%d/%m/%Y %H:%M") if r["time"] else "", r["pc"], r["creator"], r["file"],
+                "" if r["rows"] is None else f"{int(r['rows']):,}",
+                "Thành công" if r["ok"] else "Thất bại", r["detail"]),
+                tags=("row_normal" if r["ok"] else "err_row",))
+        tr._flush()
+        n_ok = sum(1 for r in shown if r["ok"])
+        dt = THEMES[ctk.get_appearance_mode()]
+        self._hist_kpi["total"].config(text=f"{len(shown):,}")
+        self._hist_kpi["ok"].config(text=f"{n_ok:,}", fg=dt["log_ok"] if n_ok else dt["text_main"])
+        self._hist_kpi["err"].config(text=f"{len(shown) - n_ok:,}",
+                                     fg=dt["log_err"] if len(shown) - n_ok else dt["text_main"])
+        more = f" (hiện {self._HIST_LIMIT:,} lần gần nhất)" if len(self._hist_rows) >= self._HIST_LIMIT else ""
+        self.lbl_hist_status.configure(text=f"✅  {len(shown):,} / {len(self._hist_rows):,} bản ghi{more}")
+        self.btn_hist_export.configure(state="normal" if shown else "disabled")
+        self._hist_show_detail(0 if shown else None)
+
+    def _hist_show_detail(self, idx=-1):
+        """Điền khung chi tiết theo dòng đang chọn (idx=None: xóa; idx=-1: lấy theo lưới)."""
+        if idx == -1:
+            try:
+                cs = self._hist_tree.sheet.get_currently_selected()
+                idx = getattr(cs, "row", None)
+                if idx is None and cs:
+                    idx = cs[0]
+            except Exception:
+                return
+        if idx is None or not (0 <= idx < len(self._hist_shown)):
+            for v in self._hist_det.values():
+                v.config(text="—")
+            return
+        r = self._hist_shown[idx]
+        dt = THEMES[ctk.get_appearance_mode()]
+        self._hist_det["time"].config(text=r["time"].strftime("%d/%m/%Y %H:%M:%S") if r["time"] else "—")
+        self._hist_det["pc"].config(text=f"{r['pc']} / {r['user']}  ·  tool v{r['ver'] or '?'}")
+        self._hist_det["creator"].config(text=r["creator"])
+        self._hist_det["file"].config(text=r["file"] or "—")
+        self._hist_det["act"].config(text=self._HIST_ACTIONS.get(r["action"], r["action"] or "—"))
+        self._hist_det["rows"].config(text="—" if r["rows"] is None else f"{int(r['rows']):,}")
+        self._hist_det["res"].config(text=("Thành công — " if r["ok"] else "Thất bại — ") + (r["detail"] or ""),
+                                     fg=dt["text_main"] if r["ok"] else dt["log_err"])
+
+    def _hist_export(self):
+        if not self._hist_shown:
+            return
+        path = filedialog.asksaveasfilename(defaultextension=".xlsx", filetypes=[("Excel", "*.xlsx")],
+                                            initialfile="LichSuNhapLieu.xlsx")
+        if not path:
+            return
+        try:
+            import openpyxl
+            from openpyxl.styles import Font, PatternFill, Alignment
+            wb = openpyxl.Workbook()
+            ws = wb.active
+            ws.title = "LichSu"
+            ws.append(["Thời gian", "Máy", "Người dùng", "Nhân viên lập", "Loại", "Tên file Excel",
+                       "Dòng đọc được", "Trạng thái", "Chi tiết", "Phiên bản tool"])
+            for c in ws[1]:
+                c.fill = PatternFill("solid", fgColor="2B7A78")
+                c.font = Font(bold=True, color="FFFFFF")
+                c.alignment = Alignment(horizontal="center")
+            for r in self._hist_shown:
+                ws.append([r["time"], r["pc"], r["user"], r["creator"], self._HIST_ACTIONS.get(r["action"], r["action"]),
+                           r["file"], r["rows"], "Thành công" if r["ok"] else "Thất bại",
+                           r["detail"], r["ver"]])
+            from openpyxl.utils import get_column_letter
+            for i, w in enumerate((20, 20, 18, 30, 18, 44, 14, 12, 70, 12), 1):
+                ws.column_dimensions[get_column_letter(i)].width = w
+            for row in ws.iter_rows(min_row=2, max_col=1):
+                row[0].number_format = "dd/mm/yyyy hh:mm:ss"
+            wb.save(path)
+            self._show_export_success("Xuất Excel thành công",
+                                      f"Đã xuất {len(self._hist_shown):,} bản ghi\n→ {path}", path)
+        except Exception as e:
+            self._show_msg("Lỗi xuất Excel", str(e))
+
     # ─ Tab 3: Tổng hợp THDM ───────────────────────────────────────────────────────────────────
 
     def _on_tab_changed(self):
@@ -4171,574 +4524,439 @@ class BOMToolApp(ctk.CTk):
             return
         # So khớp CHÍNH XÁC với TAB_THDM (không dùng substring "THDM in ..."
         # — dễ vỡ mỗi khi đổi tên tab, xem ghi chú tại TAB_THDM đầu file)
-        if tab_name == TAB_THDM and not self._thdm_product_map:
-            self._thdm_load_products()
-        if tab_name == TAB_CATALOG and not self._template_id_map:
-            self._catalog_load_templates()
+        if tab_name == TAB_CATALOG and not self._catalog_all_rows                 and not getattr(self, "_catalog_autoloaded", False):
+            self._catalog_autoloaded = True
+            self._catalog_load()
+        if tab_name == TAB_HISTORY:
+            self._hist_load()
+
+
+
+    # ── THĐM: luồng tự động + thanh bên (đồng bộ với tab BOM) ───────────────────
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    # ── Tab THĐM: kiểm tra đủ BOM theo đợt ──────────────────────────────────────
+    # PM chia sản phẩm của đơn theo đợt. THĐM của đợt chỉ lập được khi mọi dòng sản phẩm của đợt
+    # đều có BOM. Tool chỉ kiểm tra và chỉ ra chỗ thiếu — lập phiếu THĐM làm trong Bravo.
 
     def _build_tab_thdm(self):
         tab = self.nb.tab(TAB_THDM)
         dt = THEMES[ctk.get_appearance_mode()]
 
-        # ── Action bar ngang ─────────────────────────────────────────────────
-        bar = ctk.CTkFrame(tab, fg_color=("gray88","gray16"), height=56,
-                           corner_radius=0)
+        # Trạng thái nội bộ (một số tên giữ nguyên vì chỗ khác trong app còn đọc)
+        self._thdm_order_map = getattr(self, "_thdm_order_map", {})
+        self._thdm_selected_order_id = None
+        self._thdm_selected_product_id = None
+        self._thdm_selected_period_id = None
+        self._thdm_cov = []          # [{period_id, name, rows, summary, bom_ids}]
+        self._thdm_cur = -1          # chỉ số đợt đang xem
+        self._thdm_issue_items = []  # song song với thdm_err_listbox
+        self._thdm_busy = False
+        self._thdm_project_full_text = ''
+
+        bar = ctk.CTkFrame(tab, fg_color=("gray88", "#252526"), corner_radius=0, height=52)
         bar.pack(fill=tk.X)
         bar.pack_propagate(False)
+        _G = dict(font=ctk_font(*FONT_BODY_B),
+                  fg_color=("#EBEBEB", "#2D2D2D"), text_color=("#1A1A1A", "#E1E1E1"),
+                  text_color_disabled=("#9AA3AF", "#6B7280"), hover_color=("#D8D8D8", "#3A3A3A"),
+                  border_width=1, border_color=("#CCCCCC", "#3C3C3C"),
+                  corner_radius=8, height=32)
 
-        ctk.CTkFrame(bar, fg_color="transparent", width=8).pack(side=tk.LEFT)
+        def _sep():
+            ctk.CTkFrame(bar, fg_color=("gray65", "#3C3C3C"),
+                         width=1, height=28).pack(side=tk.LEFT, padx=6, pady=PAD_MD)
 
-        self.btn_thdm_load = ctk.CTkButton(bar, text="🔄  ① Tải dữ liệu",
-            command=self._thdm_load_products,
-            font=ctk_font(*FONT_BODY_B),
-            fg_color=("#EBEBEB", "#2D2D2D"),
-            text_color=("#1A1A1A", "#E1E1E1"),
-            hover_color=("#D8D8D8", "#3A3A3A"),
-            border_width=1, border_color=("#CCCCCC", "#3C3C3C"),
-            height=32, corner_radius=8)
-        self.btn_thdm_load.pack(side=tk.LEFT, padx=(0,10), pady=PAD_MD)
+        def _lbl(text):
+            ctk.CTkLabel(bar, text=text, font=ctk_font(*FONT_BODY),
+                         text_color=("gray40", "gray55"),
+                         fg_color="transparent").pack(side=tk.LEFT, padx=(0, 4))
 
-        ctk.CTkFrame(bar, fg_color=("gray65","gray30"),
-                     width=1, height=36).pack(side=tk.LEFT, padx=(0,10), pady=10)
-
-        # Dự án
-        CLabel(bar, text="Dự án:",
-            font=ctk_font(*FONT_BODY),
-            text_color=("gray40","gray65"),
-            fg_color="transparent").pack(side=tk.LEFT, padx=(0,4))
-        self.cmb_thdm_product = _SearchCombo(bar,
-            values=["— Chọn dự án —"],
-            width=230, height=32,
-            font=ctk_font(*FONT_BODY),
-            command=self._thdm_on_product_change,
-            placeholder="— Chọn dự án —")
-        self.cmb_thdm_product.set("— Chọn dự án —")
-        self.cmb_thdm_product.pack(side=tk.LEFT, padx=(0,10))
-
-        ctk.CTkFrame(bar, fg_color=("gray65","gray30"),
-                     width=1, height=36).pack(side=tk.LEFT, padx=(0,10), pady=10)
-
-        # Đơn hàng
-        CLabel(bar, text="Đơn hàng:",
-            font=ctk_font(*FONT_BODY),
-            text_color=("gray40","gray65"),
-            fg_color="transparent").pack(side=tk.LEFT, padx=(0,4))
-        self.cmb_thdm_order = _SearchCombo(bar,
-            values=["— Chọn đơn hàng —"],
-            width=240, height=32,
-            font=ctk_font(*FONT_BODY),
-            command=self._thdm_on_order_change,
-            placeholder="— Chọn đơn hàng —",
-            state="disabled")
+        _first = ctk.CTkFrame(bar, fg_color="transparent", width=8)
+        _first.pack(side=tk.LEFT)
+        self.btn_thdm_reset = CButton(bar, text="🔄  Làm mới", command=self._thdm_reset_form, **_G)
+        self.btn_thdm_reset.pack(side=tk.LEFT, padx=(0, 4), pady=10)
+        Tooltip(self.btn_thdm_reset, lambda: "Làm mới: bỏ đơn hàng đang chọn")
+        self.btn_thdm_recheck = CButton(bar, text="🔍  Kiểm tra lại", command=self._thdm_recheck,
+                                        state="disabled", **_G)
+        self.btn_thdm_recheck.pack(side=tk.LEFT, padx=(0, 4), pady=10)
+        Tooltip(self.btn_thdm_recheck, lambda: "Đọc lại BOM và các đợt của đơn hàng từ Bravo")
+        _sep()
+        _lbl("Đơn hàng:")
+        self.cmb_thdm_order = _SearchCombo(bar, values=["— Đang tải... —"], width=230, height=32,
+            font=ctk_font(*FONT_BODY), command=self._thdm_on_order_change,
+            placeholder="— Chọn đơn hàng —", state="disabled")
         self.cmb_thdm_order.set("— Chọn đơn hàng —")
-        self.cmb_thdm_order.pack(side=tk.LEFT, padx=(0,10))
+        self.cmb_thdm_order.pack(side=tk.LEFT, padx=(0, 6), pady=10)
+        self.cmb_thdm_order.set_error(True)
+        _sep()
+        _lbl("Dự án:")
+        self.ent_thdm_project = ctk.CTkEntry(bar, font=ctk_font(*FONT_BODY_B), height=32, width=160,
+            corner_radius=6, state="disabled", fg_color=("#EEF1F6", "#2D2D30"),
+            text_color=("#0F172A", "#E8E8E8"), border_color=("#C3CCD8", "#444444"))
+        self.ent_thdm_project.pack(side=tk.LEFT, padx=(0, 6), pady=10, fill=tk.X, expand=True)
+        Tooltip(self.ent_thdm_project, lambda: self._thdm_project_full_text)
+        self._thdm_set_project_display('')
 
-        ctk.CTkFrame(bar, fg_color=("gray65","gray30"),
-                     width=1, height=36).pack(side=tk.LEFT, padx=(0,8), pady=10)
 
-        CLabel(bar, text="Nhân viên:",
-            font=ctk_font(*FONT_BODY),
-            text_color=("gray40","gray65"),
-            fg_color="transparent").pack(side=tk.LEFT, padx=(0,4))
-        self.cmb_thdm_creator = _SearchCombo(bar,
-            values=["— Đang tải... —"],
-            width=200, height=32,
-            font=ctk_font(*FONT_BODY),
-            command=self._on_thdm_creator_change,
-            placeholder="— Chọn nhân viên —")
-        self.cmb_thdm_creator.set("— Đang tải... —")
-        self.cmb_thdm_creator.pack(side=tk.LEFT, padx=(0,10))
+        tk.Frame(tab, bg=dt["border"], height=1).pack(fill=tk.X)
+        body = tk.Frame(tab, bg=dt["bg_main"])
+        body.pack(fill=tk.BOTH, expand=True, pady=(10, 0))
 
-        ctk.CTkFrame(bar, fg_color=("gray65","gray30"),
-                     width=1, height=36).pack(side=tk.LEFT, padx=(0,8), pady=10)
+        sb = tk.Frame(body, bg=dt["bg_deep"], width=270)
+        sb.pack(side=tk.LEFT, fill=tk.Y, pady=6)
+        sb.pack_propagate(False)
+        tk.Label(sb, text="CÁC ĐỢT CỦA ĐƠN", bg=dt["bg_deep"], fg=C["muted"],
+                 font=FONT_SMALL_B).pack(anchor="w", padx=PAD_MD, pady=(10, 4))
+        lw = tk.Frame(sb, bg=dt["bg_deep"])
+        lw.pack(fill=tk.X, padx=6, pady=(0, 6))
+        self.thdm_listbox = tk.Listbox(lw, bg=dt["bg_deep"], fg=dt["tv_text"],
+            selectbackground=dt["tv_sel"], selectforeground=dt["tv_text"], font=FONT_BODY,
+            height=6, exportselection=False, relief=tk.FLAT, bd=0, highlightthickness=1,
+            highlightcolor=dt["accent"], highlightbackground=dt["border"], activestyle="none")
+        self.thdm_listbox.pack(fill=tk.X)
+        self.thdm_listbox.bind("<<ListboxSelect>>", self._thdm_on_period_select)
 
-        CLabel(bar, text="Đợt:",
-            font=ctk_font(*FONT_BODY),
-            text_color=("gray40","gray65"),
-            fg_color="transparent").pack(side=tk.LEFT, padx=(0,4))
-        self.cmb_thdm_period = _SearchCombo(bar,
-            values=["— Đang tải... —"],
-            width=180, height=32,
-            font=ctk_font(*FONT_BODY),
-            command=self._on_thdm_period_change,
-            placeholder="— Chọn đợt —")
-        self.cmb_thdm_period.set("— Đang tải... —")
-        self.cmb_thdm_period.pack(side=tk.LEFT, padx=(0,10))
+        self._thdm_err_title = tk.Label(sb, text="CẦN XỬ LÝ", bg=dt["bg_deep"], fg=C["muted"],
+                                        font=FONT_SMALL_B, anchor="w")
+        self._thdm_err_title.pack(fill=tk.X, padx=PAD_MD, pady=(4, 4))
+        self._thdm_err_detail = tk.Label(sb, text="", justify="left", anchor="w", bg=dt["bg_deep"],
+            fg=dt["text_muted"], font=FONT_SMALL, wraplength=250)
+        self._thdm_err_detail.pack(side=tk.BOTTOM, fill=tk.X, padx=PAD_MD, pady=(0, 6))
+        ew = tk.Frame(sb, bg=dt["bg_deep"])
+        ew.pack(fill=tk.BOTH, expand=True, padx=6, pady=(0, 4))
+        _esb = ttk.Scrollbar(ew, orient="vertical", style="Slim.Vertical.TScrollbar")
+        _esb.pack(side=tk.RIGHT, fill=tk.Y)
+        self.thdm_err_listbox = tk.Listbox(ew, bg=dt["bg_deep"], fg=dt["tv_text"],
+            selectbackground=dt["tv_sel"], selectforeground=dt["tv_text"], font=FONT_SMALL,
+            exportselection=False, relief=tk.FLAT, bd=0, highlightthickness=1,
+            highlightcolor=dt["accent"], highlightbackground=dt["border"], activestyle="none",
+            yscrollcommand=_esb.set)
+        _esb.configure(command=self.thdm_err_listbox.yview)
+        self.thdm_err_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self.thdm_err_listbox.bind("<<ListboxSelect>>", self._thdm_on_issue_click)
 
-        ctk.CTkFrame(bar, fg_color=("gray65","gray30"),
-                     width=1, height=36).pack(side=tk.LEFT, padx=(0,8), pady=10)
+        tk.Frame(body, bg=dt["border"], width=1).pack(side=tk.LEFT, fill=tk.Y)
+        right = ctk.CTkFrame(body, fg_color=("#EEF1F6", C["panel"]), corner_radius=6,
+                             border_width=1, border_color=("#C3CCD8", C["border"]))
+        right.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 6), pady=6)
+        right.rowconfigure(2, weight=1)
+        right.columnconfigure(0, weight=1)
 
-        self.lbl_thdm_status = CLabel(bar, text="—  Chưa tải",
-            font=ctk_font(*FONT_BODY),
-            text_color=("gray40","gray55"),
-            fg_color="transparent")
-        self.lbl_thdm_status.pack(side=tk.LEFT)
+        self.lbl_thdm_table = CLabel(right, text="— Chưa có dữ liệu —", font=ctk_font(*FONT_LABEL),
+            text_color=("gray50", "gray60"), fg_color="transparent", anchor="w")
+        self.lbl_thdm_table.grid(row=0, column=0, sticky="ew", pady=(0, 2))
+        self.lbl_thdm_status = CLabel(right, text="Sẵn sàng", font=ctk_font(*FONT_SMALL_I),
+            text_color=("gray40", "gray55"), fg_color="transparent", anchor="e")
+        self.lbl_thdm_status.grid(row=0, column=1, sticky="e", padx=(8, 12), pady=(0, 2))
 
-        # ── Main area: PanedWindow kéo-thả điều chỉnh tỉ lệ trái/phải ──────
-        main = tk.PanedWindow(tab, orient=tk.HORIZONTAL,
-                              bg=dt["bg_deep"], bd=0,
-                              sashwidth=2, sashrelief="flat",
-                              opaqueresize=True)
-        main.pack(fill=tk.BOTH, expand=True)
+        # 4 thẻ số liệu của đợt đang xem
+        kp = tk.Frame(right, bg=dt["bg_main"])
+        kp.grid(row=1, column=0, columnspan=2, sticky="ew", padx=PAD_MD, pady=(4, 8))
+        self._thdm_kpi = {}
+        for i, (key, title) in enumerate((("total", "Dòng sản phẩm của đợt"), ("ok", "Đã có BOM"),
+                                          ("missing", "Thiếu BOM"))):
+            card = tk.Frame(kp, bg=dt["bg_deep"])
+            card.grid(row=0, column=i, sticky="ew", padx=(0 if i == 0 else 8, 0))
+            kp.columnconfigure(i, weight=1, uniform="k")
+            val = tk.Label(card, text="—", bg=dt["bg_deep"], fg=dt["text_main"], font=FONT_TITLE)
+            val.pack(anchor="w", padx=12, pady=(8, 0))
+            tk.Label(card, text=title, bg=dt["bg_deep"], fg=dt["text_muted"],
+                     font=FONT_SMALL).pack(anchor="w", padx=12, pady=(0, 8))
+            self._thdm_kpi[key] = val
 
-        # ── LEFT: BOM list ────────────────────────────────────────────────────
-        lf = tk.Frame(main, bg=dt["bg_deep"])
-        lf.rowconfigure(1, weight=1)
-        lf.columnconfigure(0, weight=1)
-        main.add(lf, minsize=150, stretch="always")
-
-        # Filter
-        fe = ctk.CTkFrame(lf, fg_color=("gray85","gray20"), height=32, corner_radius=0)
-        fe.grid(row=0, column=0, sticky="ew")
-        fe.pack_propagate(False)
-        self.thdm_search_var = tk.StringVar()
-        self.thdm_search_var.trace_add("write", lambda *_: self._thdm_filter_bom())
-        ctk.CTkEntry(fe, textvariable=self.thdm_search_var,
-            font=ctk_font(*FONT_BODY),
-            placeholder_text="🔍  Tìm BOM...",
-            height=30, corner_radius=0, border_width=0,
-            fg_color="transparent").pack(fill=tk.X, padx=6, pady=1)
-
-        # BOM treeview
-        btf = tk.Frame(lf, bg=dt["bg_deep"])
-        btf.grid(row=1, column=0, sticky="nsew")
-        btf.rowconfigure(0, weight=1)
-        btf.columnconfigure(0, weight=1)
-
-        # ── tksheet (Excel-like grid) ─────────────────────────────────────────
-        if _HAS_TKSHEET:
-            _sheet_theme = "light" if ctk.get_appearance_mode() == "Light" else "dark"
-            self.thdm_bom_sheet = tksheet.Sheet(
-                btf,
-                headers=["✓", "Mục số", "Mã BOM", "Tên SP", "Version"],
-                data=[],
-                theme=_sheet_theme,
-                show_row_index=False,
-                show_top_left=False,
-                row_height=30,
-                header_height=34,
-                show_horizontal_grid=True,
-                show_vertical_grid=True,
-                font=FONT_SMALL,
-                header_font=FONT_SMALL_B,
-            )
-            self.thdm_bom_sheet.enable_bindings(
-                "single_select", "drag_select", "row_select",
-                "column_width_resize", "arrowkeys",
-            )
-            try:
-                self.thdm_bom_sheet.set_options(
-                    table_bg=dt["sheet_table_bg"],
-                    table_fg=dt["sheet_table_fg"],
-                    header_bg=dt["sheet_header_bg"],
-                    header_fg=dt["sheet_header_fg"],
-                    index_bg=dt["sheet_index_bg"],
-                    index_fg=dt["sheet_index_fg"],
-                    top_left_bg=dt["sheet_header_bg"],
-                    show_horizontal_grid=True,
-                    show_vertical_grid=True,
-                    table_grid_fg=dt["sheet_grid"],
-                    header_grid_fg=dt["sheet_grid"],
-                    index_grid_fg=dt["sheet_grid"],
-                    outline_color=dt["sheet_grid"],
-                )
-            except Exception:
-                pass
-            # Căn chỉnh data cells theo loại dữ liệu (header đã center toàn bộ)
-            _bom_cols = ["✓", "Mục số", "Mã BOM", "Tên SP", "Version"]
-            for _bi, _bc in enumerate(_bom_cols):
-                _bal = guess_col_align(_bc)
-                if _bal != 'w':
-                    try:
-                        self.thdm_bom_sheet.align_columns(columns=[_bi], align=_bal)
-                    except Exception:
-                        pass
-            # Header luôn căn giữa
-            try:
-                self.thdm_bom_sheet.align_header(
-                    columns=list(range(len(_bom_cols))), align='center', redraw=False
-                )
-            except Exception:
-                pass
-            # Bind trên MT (main table canvas) — hoạt động độc lập với tksheet version
-            self.thdm_bom_sheet.MT.bind(
-                "<ButtonRelease-1>",
-                lambda e: self.after(40, self._thdm_process_sheet_click)
-            )
-            self.thdm_bom_sheet.grid(row=0, column=0, columnspan=2, sticky="nsew")
-            self.thdm_bom_sheet.column_width(column=0, width=30)
-            self.thdm_bom_sheet.column_width(column=1, width=70)
-            self.thdm_bom_sheet.column_width(column=2, width=120)
-            self.thdm_bom_sheet.column_width(column=3, width=200)
-            self.thdm_bom_sheet.column_width(column=4, width=70)
-            self.thdm_bom_tree = None   # alias — fallback path sử dụng
-            # Cột "Tên SP" tự giãn lấp hết chiều ngang khi resize cửa sổ
-            self._thdm_bom_stretch_job = None
-            def _bom_sheet_on_resize(_e=None):
-                if self._thdm_bom_stretch_job:
-                    try:
-                        self.after_cancel(self._thdm_bom_stretch_job)
-                    except Exception:
-                        pass
-                self._thdm_bom_stretch_job = self.after(
-                    100, self._thdm_bom_autostretch)
-            self.thdm_bom_sheet.bind("<Configure>", _bom_sheet_on_resize)
-        else:
-            # Fallback: ttk.Treeview khi tksheet chưa cài
-            BOM_COLS = ("✓", "Mục số", "Mã BOM", "Tên SP", "Version")
-            vsb_b = ttk.Scrollbar(btf, orient=tk.VERTICAL, style="Slim.Vertical.TScrollbar")
-            self.thdm_bom_tree = ttk.Treeview(btf, style="BOM.Treeview", show="headings",
-                columns=BOM_COLS, yscrollcommand=vsb_b.set, selectmode="extended")
-            vsb_b.configure(command=self.thdm_bom_tree.yview)
-            self.thdm_bom_tree.heading("✓", text="✓", anchor="center")
-            self.thdm_bom_tree.column("✓", width=26, minwidth=26, anchor="center", stretch=False)
-            for _bc, _ba, _bw, _bs in [
-                ("Mục số", "w", 70, False), ("Mã BOM", "w", 120, False),
-                ("Tên SP",  "w", 200, True),  ("Version", "w", 70, False),
-            ]:
-                self.thdm_bom_tree.heading(_bc, text=_bc, anchor=_ba)
-                self.thdm_bom_tree.column(_bc, width=_bw, minwidth=50, anchor=_ba, stretch=_bs)
-            self.thdm_bom_tree.tag_configure("checked",   foreground=dt["log_ok"])
-            self.thdm_bom_tree.tag_configure("unchecked", foreground=dt["text_muted"])
-            self.thdm_bom_tree.grid(row=0, column=0, sticky="nsew")
-            vsb_b.grid(row=0, column=1, sticky="ns")
-            self.thdm_bom_tree.bind("<ButtonRelease-1>", self._thdm_on_bom_click)
-            self.thdm_bom_sheet = None
-
-        # Bottom bar left
-        lb = ctk.CTkFrame(lf, fg_color=("gray85","gray18"), height=36, corner_radius=0)
-        lb.grid(row=2, column=0, sticky="ew")
-        lb.pack_propagate(False)
-
-        self.btn_thdm_sel_all = ctk.CTkButton(lb, text="☑ Tất cả",
-            command=lambda: self._thdm_toggle_all(True),
-            font=ctk_font(*FONT_SMALL),
-            fg_color="transparent", border_width=1,
-            text_color=("gray40","gray65"),
-            border_color=("gray50","gray55"),
-            hover_color=("gray80","gray25"),
-            width=80, height=26, corner_radius=8)
-        self.btn_thdm_sel_all.pack(side=tk.LEFT, padx=(6,2), pady=5)
-
-        self.btn_thdm_desel_all = ctk.CTkButton(lb, text="☐ Bỏ",
-            command=lambda: self._thdm_toggle_all(False),
-            font=ctk_font(*FONT_SMALL),
-            fg_color="transparent", border_width=1,
-            text_color=("gray40","gray65"),
-            border_color=("gray50","gray55"),
-            hover_color=("gray80","gray25"),
-            width=60, height=26, corner_radius=8)
-        self.btn_thdm_desel_all.pack(side=tk.LEFT, padx=(0,6), pady=5)
-
-        self.lbl_thdm_sel_count = CLabel(lb, text="0 BOM chọn",
-            font=ctk_font(*FONT_SMALL),
-            text_color=("gray40","gray55"),
-            fg_color="transparent")
-        self.lbl_thdm_sel_count.pack(side=tk.LEFT)
-
-        # Xanh dương (hành động xử lý) — xanh lá dành riêng cho nút INSERT
-        self.btn_thdm_aggregate = ctk.CTkButton(lb, text="📊  ③ Tổng hợp",
-            command=self._thdm_aggregate,
-            font=ctk_font(*FONT_BODY_B),
-            fg_color=("#0066CC", "#0066CC"),
-            hover_color=("#0055AA", "#0055AA"),
-            text_color="#FFFFFF",
-            height=26, corner_radius=8, state="normal")
-        self.btn_thdm_aggregate.pack(side=tk.RIGHT, padx=6, pady=5)
-
-        # ── RIGHT: File picker + Preview ─────────────────────────────────────
-        rf = tk.Frame(main, bg=dt["bg_main"])
-        main.add(rf, minsize=200, stretch="always")
-        self.after(80, lambda: main.sash_place(0, 350, 0))
-
-        # File picker row — pack TRÊN đầu
-        fp = ctk.CTkFrame(rf, fg_color=("gray85","gray20"), height=42, corner_radius=0)
-        fp.pack(side=tk.TOP, fill=tk.X)
-        fp.pack_propagate(False)
-
-        self.btn_thdm_pick_excel = ctk.CTkButton(fp, text="📂  ② Chọn file Excel THDM",
-            command=self._thdm_pick_excel,
-            font=ctk_font(*FONT_BODY),
-            fg_color="transparent", border_width=1,
-            text_color=("gray40","gray65"),
-            border_color=("gray50","gray55"),
-            hover_color=("gray80","gray25"),
-            height=28, corner_radius=5)
-        self.btn_thdm_pick_excel.pack(side=tk.LEFT, padx=(6,8), pady=7)
-
-        ctk.CTkFrame(fp, fg_color=("gray65","gray30"),
-                     width=1, height=24).pack(side=tk.LEFT, padx=(0,8), pady=9)
-
-        self.lbl_thdm_excel_path = CLabel(fp, text="Chưa chọn file",
-            font=ctk_font(*FONT_SMALL),
-            text_color=("gray40","gray55"),
-            fg_color="transparent")
-        self.lbl_thdm_excel_path.pack(side=tk.LEFT)
-
-        # ── Content area — switches between pre-preview and result ────────────
-        # (pack() được gọi SAU khi ab đã pack(BOTTOM) để không bị che khuất)
-        ca = tk.Frame(rf, bg=dt["bg_main"])
+        ca = tk.Frame(right, bg=dt["bg_main"])
+        ca.grid(row=2, column=0, columnspan=2, sticky="nsew")
         ca.rowconfigure(0, weight=1)
         ca.columnconfigure(0, weight=1)
-        self._thdm_content_area = ca
+        self._thdm_cols = ("muc", "code", "name", "qty", "bom", "status")
+        self._thdm_tree = SheetTable(ca, columns=self._thdm_cols)
+        self._thdm_tree.grid(row=0, column=0, sticky="nsew")
+        for col, text, width, anchor, stretch in (
+                ("muc", "Mục", 70, "center", False), ("code", "Mã SP", 130, "w", False),
+                ("name", "Tên sản phẩm", 420, "w", True), ("qty", "SL", 70, "e", False),
+                ("bom", "BOM", 150, "w", False), ("status", "Trạng thái", 140, "w", False)):
+            self._thdm_tree.heading(col, text=text, anchor="center")
+            self._thdm_tree.column(col, width=width, anchor=anchor, stretch=stretch, minwidth=50)
+        self._thdm_tree.tag_configure("row_normal", foreground=dt["text_main"])
+        self._thdm_tree.tag_configure("err_row", background=dt["badge_err_bg"],
+                                      foreground=dt["badge_err_fg"])
 
-        # ── PRE-PREVIEW frame (hiện sau khi chọn file, trước khi Tổng hợp) ──
-        pref = tk.Frame(ca, bg=dt["bg_main"])
-        pref.grid(row=0, column=0, sticky="nsew")
-        pref.rowconfigure(1, weight=1)
-        pref.columnconfigure(0, weight=1)
-        self._thdm_pre_frame = pref
-
-        self._lbl_thdm_pre_status = tk.Label(pref,
-            text="⏳  Đang đọc file Excel...",
-            font=FONT_BODY, fg=dt["text_muted"], bg=dt["bg_main"], anchor="w")
-        self._lbl_thdm_pre_status.grid(row=0, column=0, sticky="ew", padx=PAD_MD, pady=(8, 4))
-
-        self._thdm_pre_nb = ttk.Notebook(pref)
-        self._thdm_pre_nb.grid(row=1, column=0, sticky="nsew", padx=PAD_XS, pady=(0, 4))
-
-        # Tab 1 — Raw Excel
-        raw_tab = tk.Frame(self._thdm_pre_nb, bg=dt["bg_panel"])
-        self._thdm_pre_nb.add(raw_tab, text="  📄 Raw Excel  ")
-        raw_tab.rowconfigure(0, weight=1)
-        raw_tab.columnconfigure(0, weight=1)
-        if _HAS_TKSHEET:
-            self.thdm_raw_tree = SheetTable(raw_tab, columns=("_ph",))
-            self.thdm_raw_tree.grid(row=0, column=0, sticky="nsew")
-        else:
-            vsb_r = ttk.Scrollbar(raw_tab, orient=tk.VERTICAL,   style="Slim.Vertical.TScrollbar")
-            hsb_r = ttk.Scrollbar(raw_tab, orient=tk.HORIZONTAL, style="Slim.Horizontal.TScrollbar")
-            self.thdm_raw_tree = ttk.Treeview(raw_tab, style="BOM.Treeview", show="headings",
-                columns=("_ph",), yscrollcommand=vsb_r.set, xscrollcommand=hsb_r.set)
-            vsb_r.configure(command=self.thdm_raw_tree.yview)
-            hsb_r.configure(command=self.thdm_raw_tree.xview)
-            self.thdm_raw_tree.grid(row=0, column=0, sticky="nsew")
-            vsb_r.grid(row=0, column=1, sticky="ns")
-            hsb_r.grid(row=1, column=0, sticky="ew")
-
-        # (Tab "Đã xử lý" đã bỏ hẳn — chỉ xem Raw trước khi Tổng hợp,
-        #  dữ liệu đã xử lý xem ở màn hình kết quả đa tab sau khi Tổng hợp.)
-
-        pref.grid_remove()   # ẩn cho đến khi file được chọn
-
-        # ── RESULT frame (hiển thị sau khi Tổng hợp) ─────────────────────────
-        ptf = tk.Frame(ca, bg=dt["bg_panel"], bd=1, relief="flat")
-        ptf.grid(row=0, column=0, sticky="nsew")
-        ptf.rowconfigure(0, weight=0)   # filter bar — không mở rộng
-        ptf.rowconfigure(1, weight=1)   # notebook chiếm phần còn lại
-        ptf.columnconfigure(0, weight=1)
-        self._thdm_result_frame = ptf
-
-        # ── Filter bar ─────────────────────────────────────────────────────────
-        _fb = tk.Frame(ptf, bg=dt["tv_heading_bg"])
-        _fb.grid(row=0, column=0, sticky="ew")
-        self._thdm_filter_seg = ctk.CTkSegmentedButton(
-            _fb,
-            values=["Tất cả (0)", "⚠ Dòng lỗi (0)"],
-            command=self._thdm_toggle_filter,
-            font=ctk_font(*FONT_BODY),
-            height=26, corner_radius=6,
-        )
-        self._thdm_filter_seg.pack(side=tk.LEFT, padx=PAD_SM, pady=2)
-        self._thdm_filter_seg.set("Tất cả (0)")
-
-        # ── Notebook kết quả: Đầu phiếu + mỗi section detail 1 tab (giống BOM)
-        self._thdm_result_nb = ttk.Notebook(ptf)
-        self._thdm_result_nb.grid(row=1, column=0, sticky="nsew")
-
-        def _mk_result_grid(title, columns):
-            tabf = tk.Frame(self._thdm_result_nb, bg=dt["bg_panel"])
-            self._thdm_result_nb.add(tabf, text=title)
-            tabf.rowconfigure(0, weight=1)
-            tabf.columnconfigure(0, weight=1)
-            if _HAS_TKSHEET:
-                tr = SheetTable(tabf, columns=columns)
-                tr.grid(row=0, column=0, sticky="nsew")
-            else:
-                _v = ttk.Scrollbar(tabf, orient=tk.VERTICAL,   style="Slim.Vertical.TScrollbar")
-                _h = ttk.Scrollbar(tabf, orient=tk.HORIZONTAL, style="Slim.Horizontal.TScrollbar")
-                tr = ttk.Treeview(tabf, style="BOM.Treeview", show="headings",
-                    columns=columns, yscrollcommand=_v.set, xscrollcommand=_h.set)
-                _v.configure(command=tr.yview)
-                _h.configure(command=tr.xview)
-                tr.grid(row=0, column=0, sticky="nsew")
-                _v.grid(row=0, column=1, sticky="ns")
-                _h.grid(row=1, column=0, sticky="ew")
-            tr.tag_configure("row_normal", foreground=dt["text_main"])
-            tr.tag_configure("row_alt",    foreground=dt["text_muted"])
-            tr.tag_configure("err_row",  background=dt["badge_err_bg"],  foreground=dt["badge_err_fg"])
-            tr.tag_configure("warn_row", background=dt["badge_warn_bg"], foreground=dt["badge_warn_fg"])
-            tr.tag_configure("sql_names", background=dt["field_row_bg"], foreground=dt["field_row_fg"])
-            return tr
-
-        # Tab 0 — Header (THDM_HEADER, resolve display-only)
-        # Hiển thị NGANG giống BOM: mỗi field 1 cột, cột gán động khi fill
-        self._thdm_header_tree = _mk_result_grid("  📋 Header  ", ())
-
-        # Tab 1..n — mỗi child section của THDM_HEADER một tab
-        self._thdm_sec_trees    = {}   # sec → tree
-        self._thdm_sec_col_defs = {}   # sec → col defs
-        for _sec, _info in self.mapping.get('_CONFIG', {}).items():
-            if _info.get('parent_section') != 'THDM_HEADER':
-                continue
-            # Cột định danh = SQL_Column (duy nhất), header text = Ten_Excel
-            _defs = _thdm_get_detail_col_defs(self.mapping.get(_sec, []))
-            _cols = tuple(d['sql_col'] for d in _defs)
-            _lbl  = _info.get('label') or _sec
-            _tr   = _mk_result_grid(f"  {_lbl}  ", _cols)
-            for d in _defs:
-                # header rỗng → tksheet hiện chữ cái cột (P,Q,R...);
-                # cột hệ thống không có Ten_Excel thì dùng SQL_Column làm header
-                _htxt = d['ten_excel'] or d['sql_col']
-                _tr.heading(d['sql_col'], text=_htxt, anchor='center')
-                _tr.column(d['sql_col'], width=d['width'], anchor=d['anchor'],
-                           stretch=d['stretch'], minwidth=50)
-            # Căn giữa riêng hàng phụ SQL_Column (2 dòng header nhìn cho gọn),
-            # dữ liệu vẫn giữ căn lề theo kiểu cột
-            if hasattr(_tr, 'center_rows_by_tag'):
-                _tr.center_rows_by_tag("sql_names")
-            self._thdm_sec_trees[_sec]    = _tr
-            self._thdm_sec_col_defs[_sec] = _defs
-
-        # Alias tương thích code cũ: tree chính = section đầu tiên (THDM_THVT)
-        self.thdm_preview_tree = (next(iter(self._thdm_sec_trees.values()), None)
-                                  or self._thdm_header_tree)
-
-        # Bind click / double-click cho statusbar + Quick Map (Feature 1 & 2).
-        #
-        # "cell_select" / "rc_select" → extra_bindings API; event.selected.row
-        #   là 0-based row index trong tksheet data.
-        #
-        # Double-click → "double_click_cell" không tồn tại trong BINDING_TO_ATTR
-        #   của tksheet 7.6.0; phải đặt MT.extra_double_b1_func trực tiếp.
-        #   Callback nhận raw tkinter event (.x, .y); dùng MT.identify_row(y=.y)
-        #   để lấy row index. edit_cell bật để người dùng sửa trực tiếp trên ô;
-        #   _thdm_mt_dblclick gọi hide_text_editor() trước khi mở Quick Map.
-        for _sb, _tb in self._thdm_sec_trees.items():
-            if isinstance(_tb, SheetTable):
-                _tb.sheet.extra_bindings([
-                    ("cell_select",  lambda ev, s=_sb: self._thdm_mt_click(ev, s)),
-                    ("rc_select",    lambda ev, s=_sb: self._thdm_mt_click(ev, s)),
-                    ("end_edit_cell", lambda ev, s=_sb: self._thdm_on_cell_edited(ev, s)),
-                    ("ctrl_v",       lambda ev, s=_sb: self._thdm_on_paste(ev, s)),
-                ])
-                _tb.sheet.MT.extra_double_b1_func = (
-                    lambda ev, s=_sb: self._thdm_mt_dblclick(ev, s))
-            else:
-                _tb.bind("<ButtonRelease-1>",
-                         lambda ev, s=_sb: self._thdm_mt_click(ev, s))
-                _tb.bind("<Double-1>",
-                         lambda ev, s=_sb: self._thdm_mt_dblclick(ev, s))
-
-        # Action bar bottom — pack TRƯỚC ca để không bị che khuất bởi sheet
-        ab = ctk.CTkFrame(rf, fg_color="transparent", height=44)
-        ab.pack(side=tk.BOTTOM, fill=tk.X, pady=(4, 0))
-        ab.pack_propagate(False)
-
-        # Tạm ẩn "Xuất Excel" / "Xem SQL" theo yêu cầu — user không cần,
-        # gây rối vì không nằm trong luồng ①→⑤. Widget vẫn tạo (không .pack())
-        # để các chỗ .configure(state=...) khác trong code không lỗi;
-        # muốn hiện lại chỉ cần thêm .pack(...) như 2 nút bên dưới.
-        self.btn_thdm_export_xl = CButton(ab, text="📤  Xuất Excel",
-            command=self._thdm_export_excel,
-            font=ctk_font(*FONT_MD),
-            fg_color="transparent", border_width=1,
-            text_color=("gray50", "gray60"),
-            border_color=("gray50", "gray55"),
-            hover_color=("gray90", "gray25"),
-            width=120, height=30, corner_radius=8, state="disabled")
-
-        self.btn_thdm_view_sql = CButton(ab, text="📋  Xem SQL",
-            command=self._thdm_view_sql,
-            font=ctk_font(*FONT_MD),
-            fg_color="transparent", border_width=1,
-            text_color=("gray50", "gray60"),
-            border_color=("gray50", "gray55"),
-            hover_color=("gray90", "gray25"),
-            width=100, height=30, corner_radius=8, state="disabled")
-
-        self.btn_thdm_validate = CButton(ab, text="🔍  ④ Kiểm tra",
-            command=self._thdm_validate,
-            font=ctk_font(*FONT_MD_B),
-            fg_color="transparent", border_width=1,
-            text_color=("#3B82F6", "#60A5FA"),
-            border_color=("#3B82F6", "#60A5FA"),
-            hover_color=("#DBEAFE", "#1E3A5F"),
-            width=110, height=30, corner_radius=8, state="disabled")
-        self.btn_thdm_validate.pack(side=tk.LEFT, padx=(0, 4))
-        Tooltip(self.btn_thdm_validate,
-                lambda: "Soát dòng thiếu Mã VTTB hoặc mã không có trong danh mục"
-                        " — phải đạt 0 lỗi mới INSERT được")
-
-        # btn_thdm_view_sql ẩn theo yêu cầu — không pack()
-        Tooltip(self.btn_thdm_view_sql,
-                lambda: "Xem câu SQL INSERT sẽ thực thi — dùng để đối chiếu dữ liệu trước khi tạo THDM")
-
-        # INSERT — Primary Blue, đồng nhất với nút Import bên tab BOM
-        self.btn_thdm_insert = CButton(ab, text="💾  ⑤ Tạo THDM",
-            command=self._thdm_insert_db,
-            font=ctk_font(*FONT_MD_B),
-            fg_color=("#0066CC", "#0066CC"),
-            hover_color=("#0055AA", "#0055AA"),
-            text_color="#FFFFFF",
-            text_color_disabled="#6B9CD6",
-            width=210, height=30, corner_radius=8, state="disabled")
-        self.btn_thdm_insert.pack(side=tk.RIGHT)
-
-        # Label kết quả tổng hợp/kiểm tra — đặt ở action bar dưới (đủ chỗ,
-        # tránh tràn như khi để trên thanh lookup)
-        self.lbl_thdm_result = CLabel(ab, text="",
-            font=ctk_font(*FONT_BODY),
-            text_color=("gray40", "gray55"),
-            fg_color="transparent")
-        self.lbl_thdm_result.pack(side=tk.LEFT, padx=(10, 6))
-
-        # Content area pack SAU ab — đảm bảo ab luôn hiển thị dưới cùng
-        ca.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
-
-        # ── Empty state (hiện khi chưa chọn gì, giống tab Import BOM) ────────
-        self._thdm_result_frame.grid_remove()
-        _ef = tk.Frame(ca, bg=dt["bg_main"])
-        _ef.place(relx=0.5, rely=0.45, anchor="center")
-        self._thdm_empty_lbl_icon = tk.Label(_ef, text="📋", bg=dt["bg_main"],
-            fg=dt["text_muted"], font=FONT_HERO)
+        self._thdm_empty_frame = tk.Frame(ca, bg=dt["bg_main"])
+        self._thdm_empty_frame.place(relx=0.5, rely=0.45, anchor="center")
+        self._thdm_empty_lbl_icon = tk.Label(self._thdm_empty_frame, text="📋", bg=dt["bg_main"],
+                                             fg=dt["text_muted"], font=FONT_HERO)
         self._thdm_empty_lbl_icon.pack()
-        self._thdm_empty_lbl_main = tk.Label(_ef,
-            text="①  Tải dữ liệu và chọn Dự án / Đơn hàng / Nhân viên / Đợt",
-            bg=dt["bg_main"], fg=dt["text_muted"], font=FONT_LABEL_N)
+        self._thdm_empty_lbl_main = tk.Label(self._thdm_empty_frame, bg=dt["bg_main"],
+            fg=dt["text_muted"], text="Chọn Đơn hàng để kiểm tra đủ BOM theo từng đợt",
+            font=FONT_LABEL_N)
         self._thdm_empty_lbl_main.pack(pady=(4, 0))
-        self._thdm_empty_lbl_hint1 = tk.Label(_ef,
-            text="Tick chọn BOM ở danh sách bên trái  →  ②  Chọn file Excel THDM",
-            bg=dt["bg_main"], fg=dt["text_muted"], font=FONT_BODY)
+        self._thdm_empty_lbl_hint1 = tk.Label(self._thdm_empty_frame, bg=dt["bg_main"],
+            fg=dt["text_muted"], text="Đợt đủ BOM  →  lập THĐM trong Bravo", font=FONT_BODY)
         self._thdm_empty_lbl_hint1.pack(pady=(2, 0))
-        self._thdm_empty_lbl_hint2 = tk.Label(_ef,
-            text="③ Tổng hợp  →  ④ Kiểm tra  →  ⑤ Tạo THDM",
-            bg=dt["bg_main"], fg=dt["text_muted"], font=FONT_BODY)
-        self._thdm_empty_lbl_hint2.pack(pady=(2, 0))
-        self._thdm_empty_frame = _ef
+        self._thdm_empty_lbl_hint2 = tk.Label(self._thdm_empty_frame, text="", bg=dt["bg_main"],
+                                              fg=dt["text_muted"], font=FONT_BODY)
 
-        # Internal state
-        self._thdm_all_bom_rows      = []    # rows BOM từ DB
-        self._thdm_checked_ids       = set() # BOM id đang checked
-        self._thdm_preview_data      = []    # rows parsed từ Excel
-        self._thdm_excel_path        = None  # đường dẫn file Excel đã chọn
-        self._thdm_product_map       = {}    # ProductId → Name
-        self._thdm_order_map         = {}    # display → BizDocId (string, dùng INSERT + BOM filter)
-        self._thdm_period_map        = {}    # PeriodId → Name
-        self._thdm_selected_product_id  = None
-        self._thdm_selected_order_id    = None   # BizDocId string (ví dụ "11034510FO")
-        self._thdm_selected_period_id   = None
-        self._thdm_sheet_row_ids        = []    # row index → BOM Id (tksheet)
-        self._thdm_period_active_map    = {}    # display → PeriodId (filtered by order)
-        self._thdm_valid_builtin_orders = None  # set of BuiltinOrder0 cho đợt đang chọn
-        self._thdm_validated            = False # đã Kiểm tra đạt chưa
-        self._thdm_val_errors           = {}    # (section, idx) → [msg,...]
-        self._thdm_validate_caches      = {}    # {sec: {cache_key: entries}}
-        self._thdm_lk_recs              = {}    # {sec: [lk_rec,...]}
-        self._thdm_val_lk_fails         = {}    # {(sec,idx): [(sql_col,raw,key,rec),...]}
-        self._thdm_filter_mode          = "all" # "all" | "errors_only"
-        self._thdm_sec_visible          = {}    # {sec: [data_idx,...]} mapping hiển thị
-        self._fuzzy_resolutions         = {}    # {(raw_str, cache_key): db_id}
+        self.lbl_thdm_banner = tk.Label(right, text="", anchor="w", justify="left",
+            font=FONT_BODY_B, bg=dt["bg_main"], fg=dt["text_main"], padx=12, pady=8, wraplength=900)
+        self.lbl_thdm_banner.grid(row=3, column=0, columnspan=2, sticky="ew", padx=PAD_MD, pady=(8, 8))
+
+    def _thdm_set_project_display(self, full_text):
+        """Ô Dự án (chỉ đọc) — rút gọn khi dài, Tooltip xem đầy đủ."""
+        self._thdm_project_full_text = full_text or ''
+        disp = full_text.strip() if full_text else '—'
+        if len(disp) > 60:
+            disp = disp[:59] + '…'
+        self.ent_thdm_project.configure(state="normal")
+        self.ent_thdm_project.delete(0, tk.END)
+        self.ent_thdm_project.insert(0, disp)
+        self.ent_thdm_project.configure(state="disabled")
+
+    # ── Chọn đơn hàng → Dự án + các đợt ──
+    def _thdm_on_order_change(self, value=None):
+        selected = self.cmb_thdm_order.get()
+        order_id = self._thdm_order_map.get(selected)
+        self._thdm_selected_order_id = order_id
+        self._thdm_clear_results()
+        self.cmb_thdm_order.set_error(not bool(order_id))
+        if not order_id:
+            self._thdm_set_project_display('')
+            self.btn_thdm_recheck.configure(state="disabled")
+            return
+        if "|" in selected:
+            self.cmb_thdm_order.set(selected.split("|")[0].strip())
+        self._thdm_set_project_display('⏳ …')
+        threading.Thread(target=self._thdm_load_project_worker, args=(order_id,), daemon=True).start()
+        self._thdm_load_coverage(order_id)
+
+    def _thdm_load_project_worker(self, order_id):
+        try:
+            conn = self._get_db_conn()
+            cur = conn.cursor()
+            cur.execute("SELECT p.Id, p.Name FROM B30BizDocSO b "
+                        "LEFT OUTER JOIN B20Product p ON p.Id = b.ProductId "
+                        "WHERE b.BizDocId = ?", (order_id,))
+            row = cur.fetchone()
+            conn.close()
+            self.after(0, lambda r=row: self._thdm_load_project_done(order_id, r))
+        except Exception:
+            self.after(0, lambda: self._thdm_load_project_done(order_id, None))
+
+    def _thdm_load_project_done(self, order_id, row):
+        if order_id != self._thdm_selected_order_id:
+            return   # đã đổi sang đơn khác trong lúc truy vấn
+        if not row or row[0] is None:
+            self._thdm_selected_product_id = None
+            self._thdm_set_project_display('⚠ Không rõ')
+        else:
+            self._thdm_selected_product_id = row[0]
+            self._thdm_set_project_display(str(row[1] or ''))
+
+    def _thdm_load_coverage(self, order_id):
+        self._thdm_busy = True
+        self.btn_thdm_recheck.configure(state="disabled")
+        self.lbl_thdm_status.config(text="⏳  Đang đọc BOM các đợt...", fg=self._text_fg)
+        threading.Thread(target=self._thdm_coverage_worker, args=(order_id,), daemon=True).start()
+
+    def _thdm_coverage_worker(self, order_id):
+        try:
+            conn = self._get_db_conn()
+            try:
+                data = thdm_coverage.load_order_coverage(conn, order_id)
+            finally:
+                conn.close()
+            self.after(0, lambda d=data: self._thdm_coverage_done(order_id, d, None))
+        except Exception as e:
+            self.after(0, lambda err=e: self._thdm_coverage_done(order_id, [], str(err)))
+
+    def _thdm_coverage_done(self, order_id, data, error):
+        if order_id != self._thdm_selected_order_id:
+            return
+        self._thdm_busy = False
+        self.btn_thdm_recheck.configure(state="normal")
+        if error:
+            self.lbl_thdm_status.config(text="Lỗi đọc dữ liệu", fg=THEMES[ctk.get_appearance_mode()]["log_err"])
+            self._thdm_show_banner(f"Không đọc được dữ liệu: {error}", "error")
+            return
+        self._thdm_cov = data
+        self._thdm_render_all()
+
+    # ── Hiển thị ──
+    def _thdm_clear_results(self):
+        self._thdm_cov, self._thdm_cur, self._thdm_issue_items = [], -1, []
+        self._thdm_selected_period_id = None
+        self.thdm_listbox.delete(0, tk.END)
+        self.thdm_err_listbox.delete(0, tk.END)
+        self._thdm_err_title.config(text="CẦN XỬ LÝ")
+        self._thdm_err_detail.config(text="")
+        ch = self._thdm_tree.get_children()
+        if ch:
+            self._thdm_tree.delete(*ch)
+        for k in self._thdm_kpi.values():
+            k.config(text="—", fg=THEMES[ctk.get_appearance_mode()]["text_main"])
+        self.lbl_thdm_table.configure(text="— Chưa có dữ liệu —")
+        self.lbl_thdm_status.config(text="Sẵn sàng", fg=self._muted_fg)
+        self.lbl_thdm_banner.config(text="", bg=THEMES[ctk.get_appearance_mode()]["bg_main"])
+        self._thdm_empty_frame.place(relx=0.5, rely=0.45, anchor="center")
+
+    def _thdm_render_all(self):
+        dt = THEMES[ctk.get_appearance_mode()]
+        self.thdm_listbox.delete(0, tk.END)
+        for p in self._thdm_cov:
+            s = p["summary"]
+            self.thdm_listbox.insert(tk.END, f"{p['name']}   {s['ok']}/{s['total']}")
+            self.thdm_listbox.itemconfig(
+                tk.END, fg=dt["badge_err_fg"] if s["missing"] else dt["log_ok"])
+        # Danh sách "Cần xử lý": mọi dòng thiếu BOM của mọi đợt
+        self.thdm_err_listbox.delete(0, tk.END)
+        self._thdm_issue_items = []
+        for pi, p in enumerate(self._thdm_cov):
+            for ri, r in enumerate(p["rows"]):
+                if r["status"] != "missing":
+                    continue
+                self.thdm_err_listbox.insert(
+                    tk.END, f"✖ {p['name']} · Mục {r['muc']} · {r['code'] or 'chưa có mã'}")
+                self.thdm_err_listbox.itemconfig(tk.END, fg=dt["badge_err_fg"])
+                self._thdm_issue_items.append((pi, ri, f"{p['name']}, Mục {r['muc']}: "
+                                               f"{r['name'] or r['code']} chưa có BOM"))
+        n = len(self._thdm_issue_items)
+        self._thdm_err_title.config(text=f"CẦN XỬ LÝ · {n}" if n else "CẦN XỬ LÝ")
+        self._thdm_err_detail.config(text="")
+        total = sum(p["summary"]["total"] for p in self._thdm_cov)
+        self.lbl_thdm_status.config(
+            text=f"{len(self._thdm_cov)} đợt · {total} dòng sản phẩm", fg=self._muted_fg)
+        if not self._thdm_cov:
+            self._thdm_empty_frame.place(relx=0.5, rely=0.45, anchor="center")
+            self._thdm_show_banner("Đơn hàng này chưa chia sản phẩm theo đợt.", "empty")
+            return
+        first_bad = next((i for i, p in enumerate(self._thdm_cov) if p["summary"]["missing"]), 0)
+        self._thdm_show_period(first_bad)
+
+    def _thdm_show_period(self, idx, focus_row=None):
+        if not 0 <= idx < len(self._thdm_cov):
+            return
+        dt = THEMES[ctk.get_appearance_mode()]
+        p = self._thdm_cov[idx]
+        self._thdm_cur = idx
+        self._thdm_selected_period_id = p["period_id"]
+        self.thdm_listbox.selection_clear(0, tk.END)
+        self.thdm_listbox.selection_set(idx)
+        self.thdm_listbox.see(idx)
+        self._thdm_empty_frame.place_forget()
+        s = p["summary"]
+        self.lbl_thdm_table.configure(text=p["name"])
+        self._thdm_kpi["total"].config(text=str(s["total"]), fg=dt["text_main"])
+        self._thdm_kpi["ok"].config(text=str(s["ok"]), fg=dt["log_ok"] if s["ok"] else dt["text_main"])
+        self._thdm_kpi["missing"].config(text=str(s["missing"]),
+                                         fg=dt["log_err"] if s["missing"] else dt["text_main"])
+        tr = self._thdm_tree
+        ch = tr.get_children()
+        if ch:
+            tr.delete(*ch)
+        for r in p["rows"]:
+            qty = r["qty"]
+            qty_txt = "" if qty is None else (f"{float(qty):g}")
+            bom = f"{r['bom_code']} · v{r['bom_version']}" if r["bom_id"] else "—"
+            tr.insert("", "end", values=(r["muc"], r["code"], r["name"], qty_txt, bom,
+                                         "Đủ" if r["status"] == "ok" else "Chưa có BOM"),
+                      tags=("row_normal" if r["status"] == "ok" else "err_row",))
+        tr._flush()
+        self._thdm_fit_name_col()
+        text, level = thdm_coverage.period_message(p["name"], s, p["rows"])
+        self._thdm_show_banner(text, level)
+        if focus_row is not None:
+            self._thdm_focus_row(focus_row)
+
+    def _thdm_fit_name_col(self):
+        """Cột 'Tên sản phẩm' giãn lấp phần ngang còn trống của bảng."""
+        try:
+            self._thdm_tree.sheet.update_idletasks()
+            avail = self._thdm_tree.sheet.winfo_width()
+            fixed = 70 + 130 + 70 + 150 + 140   # các cột còn lại (px logic)
+            self._thdm_tree.column("name", width=max(320, avail - fixed - 40))
+            self._thdm_tree._flush()
+        except Exception:
+            pass
+
+    def _thdm_focus_row(self, row_idx):
+        tr = self._thdm_tree
+
+        def _go():
+            try:
+                sh = tr.sheet
+                sh.deselect("all")
+                sh.select_cell(row_idx, 0)
+                sh.see(row_idx, 0, check_cell_visibility=False)
+            except Exception:
+                pass
+        tr.sheet.update_idletasks()
+        _go()
+        self.after(120, _go)
+
+    def _thdm_show_banner(self, text, level):
+        dt = THEMES[ctk.get_appearance_mode()]
+        bg, fg = {"ok": (dt["badge_ok_bg"], dt["badge_ok_fg"]),
+                  "error": (dt["badge_err_bg"], dt["badge_err_fg"]),
+                  "empty": (dt["badge_warn_bg"], dt["badge_warn_fg"])}[level]
+        icon = {"ok": "✔", "error": "⚠", "empty": "ℹ"}[level]
+        self.lbl_thdm_banner.config(text=f"{icon}  {text}", bg=bg, fg=fg)
+
+    def _thdm_refresh_view(self):
+        """Vẽ lại màu theo theme hiện tại (gọi khi đổi Dark/Light)."""
+        if getattr(self, "_thdm_cov", None):
+            self._thdm_render_all_keep()
+        else:
+            self.lbl_thdm_banner.config(bg=THEMES[ctk.get_appearance_mode()]["bg_main"])
+
+    def _thdm_render_all_keep(self):
+        cur = self._thdm_cur
+        self._thdm_render_all()
+        if 0 <= cur < len(self._thdm_cov):
+            self._thdm_show_period(cur)
+
+    # ── Thao tác ──
+    def _thdm_on_period_select(self, _event=None):
+        sel = self.thdm_listbox.curselection()
+        if sel:
+            self._thdm_show_period(sel[0])
+
+    def _thdm_on_issue_click(self, _event=None):
+        sel = self.thdm_err_listbox.curselection()
+        if not sel or sel[0] >= len(self._thdm_issue_items):
+            return
+        pi, ri, msg = self._thdm_issue_items[sel[0]]
+        self._thdm_err_detail.config(text=msg)
+        self._thdm_show_period(pi, focus_row=ri)
+
+    def _thdm_recheck(self):
+        if self._thdm_selected_order_id and not self._thdm_busy:
+            self._thdm_load_coverage(self._thdm_selected_order_id)
+
+    def _thdm_reset_form(self):
+        self._thdm_selected_order_id = None
+        self._thdm_selected_product_id = None
+        self._thdm_clear_results()
+        self.cmb_thdm_order.set("— Chọn đơn hàng —")
+        self.cmb_thdm_order.set_error(True)
+        self._thdm_set_project_display('')
+        self.btn_thdm_recheck.configure(state="disabled")
 
     # ── THDM: B00Lookup helper ─────────────────────────────────────────────────
 
@@ -4928,9 +5146,6 @@ class BOMToolApp(ctk.CTk):
             _err_val = ["⚠  Lỗi tải danh sách — click để thử lại"]
             self.cmb_creator.configure(values=_err_val)
             self.cmb_creator.set(_err_val[0])
-            if hasattr(self, 'cmb_thdm_creator'):
-                self.cmb_thdm_creator.configure(values=_err_val)
-                self.cmb_thdm_creator.set(_err_val[0])
             return
         # rows = [(EmployeeId, Name, Code), ...]
         emp_to_user = emp_to_user or {}
@@ -4953,10 +5168,7 @@ class BOMToolApp(ctk.CTk):
         self.cmb_creator.set("— Chọn nhân viên —")
         self.cmb_creator.set_error(True)   # trường bắt buộc chưa chọn
         self._current_creator_user_id = None
-        if hasattr(self, 'cmb_thdm_creator'):
-            self.cmb_thdm_creator.configure(values=display_list)
-            self.cmb_thdm_creator.set("— Chọn nhân viên —")
-            self._thdm_creator_user_id = None
+        self._current_creator_display = None
 
     def _lookup_user_id_by_emp(self, emp_id):
         """Query B00UserList lấy UserId từ EmployeeId — chỉ gọi khi cache miss."""
@@ -4995,6 +5207,7 @@ class BOMToolApp(ctk.CTk):
         # tránh mất dấu nhân viên thật khi họ chưa được ráp UserList (bug đã gặp:
         # toàn bộ rơi về EmployeeId=1 vì CreatedBy fallback che mất người chọn).
         self._current_creator_employee_id = getattr(self, '_employee_id_map', {}).get(selected_name)
+        self._current_creator_display = selected_name
         self.cmb_creator.set_error(False)
         # Sau khi chọn chỉ hiển thị Code (phần trước |)
         if selected_name and "|" in selected_name:
@@ -5002,151 +5215,17 @@ class BOMToolApp(ctk.CTk):
         # Nhân viên không ảnh hưởng kết quả tra cứu DB → giữ layer2_done, chỉ cập nhật cổng Import
         self._refresh_bom_gate()
 
-    def _on_thdm_creator_change(self, selected_name):
-        if selected_name and ("Lỗi" in selected_name or "Đang tải" in selected_name):
-            self._load_creator_combo()
-            return
-        user_id = getattr(self, '_creator_map', {}).get(selected_name)
-        if user_id is None:
-            # Cache miss: query trực tiếp DB
-            emp_id = getattr(self, '_employee_id_map', {}).get(selected_name)
-            if emp_id is not None:
-                user_id = self._lookup_user_id_by_emp(emp_id)
-            if user_id is None:
-                user_id = DEFAULT_CREATOR_USER_ID
-        self._thdm_creator_user_id     = user_id
-        self.cmb_thdm_creator.set_error(False)
-        # EmployeeId riêng: B20Employee.Id (khác UserId) dùng cho THDM_HEADER.EmployeeId
-        self._thdm_creator_employee_id = getattr(self, '_employee_id_map', {}).get(selected_name)
-        # Sau khi chọn chỉ hiển thị Code (phần trước |)
-        if selected_name and "|" in selected_name:
-            self.cmb_thdm_creator.set(selected_name.split("|")[0].strip())
 
     # ── THDM: Load Dự án ──────────────────────────────────────────────────────
 
-    def _thdm_load_products(self):
-        self.btn_thdm_load.configure(state="disabled", text="⏳  Đang tải...")
-        self.lbl_thdm_status.config(text="⏳  Đang tải dự án...", fg=self._text_fg)
-        threading.Thread(target=self._thdm_load_products_worker, daemon=True).start()
 
-    def _thdm_load_products_worker(self):
-        try:
-            sql, params = self._b00lookup_build_query("Product1",
-                extra_where="IsActive = 1")
-            # Inject Code vào SELECT để hiển thị "Code | Name [Id]"
-            sql = sql.replace(" FROM ", ", Code FROM ", 1)
-            conn = self._get_db_conn()
-            cur  = conn.cursor()
-            cur.execute(sql, params)
-            rows = cur.fetchall()   # (Id, Name, Code)
-            conn.close()
-            self.after(0, lambda d=rows: self._thdm_load_products_done(d, None))
-        except Exception as e:
-            self.after(0, lambda err=e: self._thdm_load_products_done([], str(err)))
 
-    def _thdm_load_products_done(self, rows, error):
-        dt = THEMES[ctk.get_appearance_mode()]
-        self.btn_thdm_load.configure(state="normal", text="🔄  ① Tải dữ liệu")
-        if error:
-            self.lbl_thdm_status.config(text=f"❌  {error}", fg=dt["log_err"])
-            return
-        # Hiển thị "Code  |  Name  [Id]", map display → Id
-        def _prod_disp(r):
-            row_id, name, code = r[0], r[1] or "", r[2] or ""
-            return f"{code}  |  {name}  [{row_id}]"
-        display_list = [_prod_disp(r) for r in rows]
-        self._thdm_product_map = {disp: r[0] for r, disp in zip(rows, display_list)}
-        values = ["— Chọn dự án —"] + display_list
-        self.cmb_thdm_product.configure(values=values)
-        self.cmb_thdm_product.set("— Chọn dự án —")
-        self.cmb_thdm_order.configure(state="disabled", values=["— Chọn đơn hàng —"])
-        self.cmb_thdm_order.set("— Chọn đơn hàng —")
-        self._thdm_selected_product_id = None
-        self._thdm_selected_order_id   = None
-        self._thdm_all_bom_rows = []
-        self._thdm_checked_ids  = set()
-        self._thdm_filter_bom()
-        self.lbl_thdm_status.config(
-            text=f"✅  {len(rows):,} dự án — chọn dự án để tiếp tục",
-            fg=C["green"])
 
-    def _thdm_on_product_change(self, value=None):
-        selected = self.cmb_thdm_product.get()
-        product_id = self._thdm_product_map.get(selected)
-        if product_id is None:
-            self.cmb_thdm_order.configure(state="disabled",
-                                          values=["— Chọn đơn hàng —"])
-            self.cmb_thdm_order.set("— Chọn đơn hàng —")
-            self._thdm_selected_product_id = None
-            return
-        # Sau khi chọn chỉ hiển thị Code (phần trước |)
-        if "|" in selected:
-            self.cmb_thdm_product.set(selected.split("|")[0].strip())
-        self._thdm_selected_product_id = product_id
-        self.cmb_thdm_product.set_error(False)
-        self._thdm_load_orders(product_id)
 
     # ── THDM: Load Đơn hàng ───────────────────────────────────────────────────
 
-    def _thdm_load_orders(self, product_id):
-        self.cmb_thdm_order.configure(state="disabled")
-        self.lbl_thdm_status.config(text="⏳  Đang tải đơn hàng...", fg=self._text_fg)
-        threading.Thread(
-            target=self._thdm_load_orders_worker,
-            args=(product_id,), daemon=True).start()
 
-    def _thdm_load_orders_worker(self, product_id):
-        try:
-            # Custom SQL: hiển thị DocNo2 | DocDate | Description
-            # BizDocId = string dạng "11034510FO", dùng cho INSERT BizDocId_SO và BOM filter
-            sql = """
-                SELECT BizDocId,
-                       ISNULL(CONCAT(DocNo2,'_',Version), DocNo)    AS DocNo2,
-                       CONVERT(varchar(10), DocDate, 103)           AS DocDate,
-                       ISNULL(Description, '')                      AS Descr
-                FROM   B30BizDocSO
-                WHERE  DocCode  = 'FO'
-                  AND  ProductId = ?
-                  AND  IsActive  = 1
-                  AND  DocStatus = 4
-                ORDER  BY DocDate DESC, DocNo2
-            """
-            conn = self._get_db_conn()
-            cur  = conn.cursor()
-            cur.execute(sql, [product_id])
-            rows = cur.fetchall()   # (BizDocId, DocNo2, DocDate, Descr)
-            conn.close()
-            self.after(0, lambda d=rows: self._thdm_load_orders_done(d, None))
-        except Exception as e:
-            self.after(0, lambda err=e: self._thdm_load_orders_done([], str(err)))
 
-    def _thdm_load_orders_done(self, rows, error):
-        dt = THEMES[ctk.get_appearance_mode()]
-        if error:
-            self.lbl_thdm_status.config(text=f"❌  {error}", fg=dt["log_err"])
-            return
-        # Hiển thị "DocNo2  |  DocDate  |  Description"
-        # r = (BizDocId, DocNo2, DocDate, Descr) — BizDocId string dạng "11034510FO"
-        def _ord_disp(r):
-            return f"{r[1]}  |  {r[2]}  |  {r[3]}"
-        display_list = [_ord_disp(r) for r in rows]
-        self._thdm_order_map = {disp: r[0] for r, disp in zip(rows, display_list)}
-        values = ["— Chọn đơn hàng —"] + display_list
-        self.cmb_thdm_order.configure(state="normal", values=values)
-        self.cmb_thdm_order.set("— Chọn đơn hàng —")
-        self._thdm_selected_order_id = None
-        self._thdm_all_bom_rows = []
-        self._thdm_checked_ids  = set()
-        # Reset Đợt combo khi đơn hàng list thay đổi
-        self.cmb_thdm_period.configure(state="disabled", values=["— Chọn đợt —"])
-        self.cmb_thdm_period.set("— Chọn đợt —")
-        self._thdm_selected_period_id   = None
-        self._thdm_valid_builtin_orders = None
-        self._thdm_period_active_map    = {}
-        self._thdm_filter_bom()
-        self.lbl_thdm_status.config(
-            text=f"✅  {len(rows):,} đơn hàng",
-            fg=C["green"])
 
     # ── Import BOM: Dropdown Đơn hàng ─────────────────────────────────────────
 
@@ -5191,6 +5270,8 @@ class BOMToolApp(ctk.CTk):
         if error or not rows:
             self.cmb_order.configure(state="normal", values=["— Chọn đơn hàng —"])
             self.cmb_order.set("— Chọn đơn hàng —")
+            self.cmb_thdm_order.configure(state="normal", values=["— Chọn đơn hàng —"])
+            self.cmb_thdm_order.set("— Chọn đơn hàng —")
             return
         def _disp(r):
             return f"{r[1]}  |  {r[2]}  |  {r[3]}"
@@ -5199,6 +5280,11 @@ class BOMToolApp(ctk.CTk):
         self.cmb_order.configure(state="normal", values=["— Chọn đơn hàng —"] + disp_list)
         self.cmb_order.set("— Chọn đơn hàng —")
         self._bom_try_auto_select_order()
+        # Tab THĐM dùng chung danh sách đơn (bản mới nhất, đã duyệt)
+        self._thdm_order_map = dict(self._bom_order_map)
+        self.cmb_thdm_order.configure(state="normal", values=["— Chọn đơn hàng —"] + disp_list)
+        self.cmb_thdm_order.set("— Chọn đơn hàng —")
+        self.cmb_thdm_order.set_error(True)
 
     def _on_bom_order_change(self, value=None):
         selected = self.cmb_order.get()
@@ -5269,2123 +5355,77 @@ class BOMToolApp(ctk.CTk):
         self._set_bom_project_display('')   # Dự án suy ra từ Đơn hàng → xóa theo
         self.cmb_order.set_error(True)   # trường bắt buộc chưa chọn
 
-    def _thdm_on_order_change(self, value=None):
-        selected = self.cmb_thdm_order.get()
-        order_id = self._thdm_order_map.get(selected)   # BizDocId string, ví dụ "11034510FO"
-        self._thdm_selected_order_id = order_id
-        # Reset Đợt và BOM filter khi đổi đơn hàng
-        self.cmb_thdm_period.configure(state="disabled", values=["— Chọn đợt —"])
-        self.cmb_thdm_period.set("— Chọn đợt —")
-        self._thdm_selected_period_id   = None
-        self._thdm_valid_builtin_orders = None
-        self._thdm_period_active_map    = {}
-        if order_id is None:
-            return
-        # Sau khi chọn chỉ hiển thị DocNo2 (phần trước |)
-        if "|" in selected:
-            self.cmb_thdm_order.set(selected.split("|")[0].strip())
-        self.cmb_thdm_order.set_error(False)
-        self._thdm_load_bom_list()
-        self._thdm_load_period_by_order(order_id)   # Task 10
 
     # ── THDM: Load Đợt (Period) — Task 10 ────────────────────────────────────
     # Đợt được lọc theo đơn hàng đang chọn qua B30BizDocDetailFactory
 
-    def _thdm_load_period_by_order(self, order_id):
-        """Bắt đầu load danh sách Đợt cho đơn hàng (background)."""
-        self.cmb_thdm_period.configure(state="disabled", values=["⏳  Đang tải đợt..."])
-        self.cmb_thdm_period.set("⏳  Đang tải đợt...")
-        self._thdm_selected_period_id   = None
-        self._thdm_valid_builtin_orders = None
-        threading.Thread(
-            target=self._thdm_period_by_order_worker,
-            args=(order_id,), daemon=True).start()
 
-    def _thdm_period_by_order_worker(self, order_id):
-        try:
-            conn = self._get_db_conn()
-            cur  = conn.cursor()
-            # B00Lookup[Period]: LookupTable=B20Period, HiddenValueMember=Id, DisplayMember=Name
-            cur.execute("""
-                SELECT DISTINCT f.PeriodId,
-                       ISNULL(p.Name, CAST(f.PeriodId AS NVARCHAR(50)))
-                FROM   B30BizDocDetailFactory AS f
-                LEFT JOIN B20Period AS p ON p.Id = f.PeriodId
-                WHERE  f.BizDocId = ?
-                  AND  f.PeriodId IS NOT NULL
-                ORDER BY ISNULL(p.Name, CAST(f.PeriodId AS NVARCHAR(50)))
-            """, [order_id])
-            rows = cur.fetchall()   # [(PeriodId, DisplayName), ...]
-            conn.close()
-            self.after(0, lambda d=rows: self._thdm_period_by_order_done(d, None))
-        except Exception as e:
-            self.after(0, lambda err=e: self._thdm_period_by_order_done([], str(err)))
 
-    def _thdm_period_by_order_done(self, rows, error):
-        dt = THEMES[ctk.get_appearance_mode()]
-        if error:
-            self.cmb_thdm_period.configure(
-                state="normal", values=["⚠  Lỗi tải đợt"])
-            self.cmb_thdm_period.set("⚠  Lỗi tải đợt")
-            # Hiện lỗi thật ra status để debug
-            self.lbl_thdm_status.config(text=f"❌  Đợt: {error}", fg=dt["log_err"])
-            return
-        if not rows:
-            self.cmb_thdm_period.configure(values=["— Không có đợt —"])
-            self.cmb_thdm_period.set("— Không có đợt —")
-            return
-        self._thdm_period_active_map = {r[1]: r[0] for r in rows}  # Name → PeriodId
-        values = ["— Chọn đợt —"] + [r[1] for r in rows]
-        self.cmb_thdm_period.configure(state="normal", values=values)
-        self.cmb_thdm_period.set("— Chọn đợt —")
-        self._thdm_selected_period_id = None
 
-    def _on_thdm_period_change(self, selected_name=None):
-        selected = self.cmb_thdm_period.get()
-        self._thdm_selected_period_id = self._thdm_period_active_map.get(selected)
-        self.cmb_thdm_period.set_error(not bool(self._thdm_selected_period_id))
-        if self._thdm_selected_period_id is None:
-            self._thdm_valid_builtin_orders = None
-            self._thdm_filter_bom()
-            return
-        # Task 11: load BuiltinOrder0 cho đợt này → filter BOM grid
-        self._thdm_load_builtin_orders_for_period()
 
     # ── THDM: Filter BOM theo BuiltinOrder0 — Task 11 ─────────────────────────
 
-    def _thdm_load_builtin_orders_for_period(self):
-        """Query DISTINCT BuiltinOrder0 cho (order, period) → filter BOM grid."""
-        order_id  = self._thdm_selected_order_id
-        period_id = self._thdm_selected_period_id
-        if order_id is None or period_id is None:
-            return
-        threading.Thread(
-            target=self._thdm_builtin_orders_worker,
-            args=(order_id, period_id), daemon=True).start()
 
-    def _thdm_builtin_orders_worker(self, order_id, period_id):
-        try:
-            conn = self._get_db_conn()
-            cur  = conn.cursor()
-            cur.execute("""
-                SELECT DISTINCT BuiltinOrder0
-                FROM   B30BizDocDetailFactory
-                WHERE  BizDocId    = ?
-                  AND  PeriodId    = ?
-                  AND  BuiltinOrder0 IS NOT NULL
-            """, [order_id, period_id])
-            valid = {str(r[0]) for r in cur.fetchall()}
-            conn.close()
-            self.after(0, lambda v=valid: self._thdm_builtin_orders_done(v, None))
-        except Exception as e:
-            self.after(0, lambda err=e: self._thdm_builtin_orders_done(set(), str(err)))
 
-    def _thdm_builtin_orders_done(self, valid_orders, error):
-        dt = THEMES[ctk.get_appearance_mode()]
-        if error:
-            self.lbl_thdm_status.config(text=f"❌  {error}", fg=dt["log_err"])
-            return
-        self._thdm_valid_builtin_orders = valid_orders
-        self._thdm_filter_bom()
 
     # ── THDM: File picker Excel ────────────────────────────────────────────────
 
-    def _thdm_pick_excel(self):
-        import tkinter.filedialog as fd
-        import os
-        path = fd.askopenfilename(
-            title="Chọn file Excel THDM",
-            filetypes=[("Excel", "*.xlsx *.xls *.xlsm"), ("All files", "*.*")])
-        if not path:
-            return
-        self._thdm_excel_path = path
-        self.lbl_thdm_excel_path.config(text=os.path.basename(path))
-        # Reset preview
-        self._thdm_clear_preview_trees()
-        self._thdm_preview_data = []
-        self._thdm_validated  = False
-        self._thdm_val_errors = {}
-        self.btn_thdm_export_xl.configure(state="disabled")
-        self.btn_thdm_view_sql.configure(state="disabled")
-        self.btn_thdm_validate.configure(state="disabled")
-        self.btn_thdm_insert.configure(state="disabled")
-        self.lbl_thdm_result.config(text="")
-        self._thdm_update_ui()
-        self._thdm_start_pre_preview(path)
 
     # ── THDM: Pre-preview (đọc Excel ngay sau khi chọn file) ──────────────────
 
-    def _thdm_start_pre_preview(self, path):
-        """Hiện pre-preview frame + bắt đầu đọc file (background)."""
-        if hasattr(self, '_thdm_empty_frame'):
-            self._thdm_empty_frame.place_forget()
-        self._thdm_result_frame.grid_remove()
-        self._thdm_pre_frame.grid()
-        self._thdm_pre_nb.grid_remove()
-        self._lbl_thdm_pre_status.config(text="⏳  Đang đọc file Excel...")
-        threading.Thread(
-            target=self._thdm_pre_preview_worker, args=(path,), daemon=True).start()
 
-    def _thdm_pre_preview_worker(self, path):
-        try:
-            mapping         = load_mapping()
-            thdm_map        = mapping.get('THDM_THVT', [])
-            mapping_anchors = [
-                _norm_vn(r['ten_excel'])
-                for r in thdm_map
-                if r.get('nguon_dl') == 'Excel' and r.get('ten_excel')
-            ]
 
-            # Mở workbook giống aggregate_worker (1 lần, tái dùng cho parse)
-            wb_c, wb_l, wb_h = _thdm_open_workbook(path)
-            sheet_name = _thdm_find_thvt_sheet(wb_c)
-            if not sheet_name:
-                raise ValueError(
-                    "Không tìm thấy sheet 'TH VT'.\n"
-                    "Tên hợp lệ: 'TH VT', 'THVT', 'TH_VT', 'Tổng hợp vật tư'.")
-
-            # Đọc raw rows từ wb_c
-            ws_c     = wb_c[sheet_name]
-            raw_base = [tuple(c.value for c in row) for row in ws_c.iter_rows()]
-
-            # Áp merge info từ wb_h (read_only=False → có merged_cells)
-            # Mục đích: fill giá trị sang các ô bị merge để hiển thị như Excel
-            merge_map = {}   # (row_0idx, col_0idx) → value
-            if wb_h and sheet_name in wb_h.sheetnames:
-                ws_h = wb_h[sheet_name]
-                for mr in ws_h.merged_cells.ranges:
-                    top_val = ws_h.cell(mr.min_row, mr.min_col).value
-                    for r in range(mr.min_row, mr.max_row + 1):
-                        for c in range(mr.min_col, mr.max_col + 1):
-                            if not (r == mr.min_row and c == mr.min_col):
-                                merge_map[(r - 1, c - 1)] = top_val
-
-            if merge_map:
-                raw_rows = []
-                for ri, row in enumerate(raw_base):
-                    lst = list(row)
-                    for ci in range(len(lst)):
-                        if (ri, ci) in merge_map:
-                            lst[ci] = merge_map[(ri, ci)]
-                    raw_rows.append(tuple(lst))
-            else:
-                raw_rows = raw_base
-
-            # Dùng raw_base (trước merge) để detect hidx
-            # — merge fill có thể làm row CHI TIẾT trông giống header hơn
-            hidx = _thdm_find_header_row(raw_base, anchors=mapping_anchors or None)
-
-            # Full parse (giống _thdm_aggregate_worker)
-            rows_raw = _thdm_parse_thvt_sheet(wb_c, wb_l, wb_h, sheet_name, thdm_map)
-            wb_c.close()
-            if wb_l: wb_l.close()
-            if wb_h: wb_h.close()
-
-            rows_out = []
-            for rd in rows_raw:
-                row_norm = {}
-                for k, v in rd.items():
-                    row_norm[k] = v.strip() if isinstance(v, str) else v
-                rows_out.append(row_norm)
-
-            self.after(0, lambda rr=raw_rows, rb=raw_base, hi=hidx, po=rows_out:
-                       self._thdm_pre_preview_done(rr, rb, hi, po, None))
-        except Exception as exc:
-            self.after(0, lambda e=exc:
-                       self._thdm_pre_preview_done([], [], None, [], str(e)))
-
-    def _thdm_pre_preview_done(self, raw_rows, raw_base, hidx, parsed_rows, error):
-        dt = THEMES[ctk.get_appearance_mode()]
-        if error:
-            self._lbl_thdm_pre_status.config(text=f"❌  {error}")
-            self._thdm_pre_nb.grid()   # hiện notebook dù lỗi (tabs rỗng)
-            return
-
-        MAX_RAW = 500
-
-        # ── Raw Excel tab ─────────────────────────────────────────────────────
-        # raw_rows = merged version (để hiển thị body),
-        # nhưng col_names lấy từ raw_rows[hidx] (row STT/MãVT...)
-        # + fallback sang raw_rows[hidx+1] (row Muc 1, Muc 1.2...) cho ô trống
-        if hidx is not None and hidx < len(raw_rows):
-            # Dùng raw_base (TRƯỚC merge) để build col_names
-            # — merge có thể span nhiều row → raw_rows[hidx] bị fill "CHI TIẾT..." sai
-            hrow_b  = raw_base[hidx]     if hidx < len(raw_base)     else ()
-            hrow2_b = raw_base[hidx + 1] if hidx + 1 < len(raw_base) else ()
-            n       = max(len(hrow_b), len(hrow2_b))
-            col_names, seen = [], {}
-            for i in range(n):
-                v1 = hrow_b[i]  if i < len(hrow_b)  else None
-                v2 = hrow2_b[i] if i < len(hrow2_b) else None
-                # Ưu tiên v2 (Muc 1, NHÀ MÁY...) vì cụ thể hơn
-                # v1 có thể là super-header chung ("CHI TIẾT GIAO CT") — chỉ dùng khi v2 trống
-                nm = str(v2).strip() if v2 is not None and str(v2).strip() else ""
-                if not nm:
-                    nm = str(v1).strip() if v1 is not None and str(v1).strip() else ""
-                if not nm:
-                    nm = f"_C{i}"
-                if nm in seen:
-                    seen[nm] += 1
-                    nm = f"{nm}_{seen[nm]}"
-                else:
-                    seen[nm] = 0
-                col_names.append(nm)
-            # Body: bắt đầu sau 2 dòng header (col headings đã hiển thị đủ thông tin)
-            display_rows = raw_rows[hidx + 2:]
-        else:
-            n_cols       = max((len(r) for r in raw_rows[:5]), default=10)
-            col_names    = [f"C{i}" for i in range(n_cols)]
-            display_rows = raw_rows
-
-        import datetime as _dt
-
-        def _raw_fmt(v):
-            """Format giá trị raw cell: datetime → chuỗi ngày, số → str, None → ''."""
-            if v is None:
-                return ""
-            if isinstance(v, (_dt.datetime, _dt.date)):
-                return v.strftime("%d/%m/%Y")
-            return str(v)
-
-        raw_tree = self.thdm_raw_tree
-        for iid in raw_tree.get_children():
-            raw_tree.delete(iid)
-        raw_tree["columns"] = tuple(col_names)
-        for nm in col_names:
-            _ra = guess_col_align(nm)
-            raw_tree.heading(nm, text=nm, anchor=_ra)
-            raw_tree.column(nm, width=90, anchor=_ra, minwidth=50, stretch=False)
-        raw_tree.tag_configure("row_header", foreground="#60A5FA", background="#1E3A5F")
-        raw_tree.tag_configure("row_normal", foreground=dt["tv_text"])
-        raw_tree.tag_configure("row_alt",    foreground=dt["text_muted"])
-        raw_tree.tag_configure("row_blank",  foreground="#444444")
-
-        for i, row in enumerate(display_rows[:MAX_RAW]):
-            padded = list(row) + [None] * max(0, len(col_names) - len(row))
-            vals   = [_raw_fmt(v) for v in padded[:len(col_names)]]
-            is_blank = all(v == "" for v in vals)
-            if is_blank:
-                tag = "row_blank"
-            else:
-                tag = "row_normal" if i % 2 == 0 else "row_alt"
-            raw_tree.insert("", "end", values=tuple(vals), tags=(tag,))
-
-        # ── Parsed data (tab "Đã xử lý" đã bỏ — chỉ giữ data cho Tổng hợp) ────
-        self._thdm_preview_data = parsed_rows   # pre-populate để Tổng hợp không cần parse lại
-
-        # Hiện notebook + cập nhật status
-        self._thdm_pre_nb.grid()
-        n_total  = len(raw_rows)
-        n_parsed = len(parsed_rows)
-        suffix   = f" (hiển thị {MAX_RAW})" if len(display_rows) > MAX_RAW else ""
-        self._lbl_thdm_pre_status.config(
-            text=(f"✅  {n_total:,} dòng Raw{suffix}  ·  {n_parsed:,} dòng đã parse"
-                  f"  —  Kiểm tra xong thì nhấn 📊 Tổng hợp"))
 
     # ── THDM: Load BOM list ────────────────────────────────────────────────────
 
-    def _thdm_load_bom_list(self):
-        self.lbl_thdm_status.config(text="⏳  Đang tải danh sách BOM...", fg=self._text_fg)
-        threading.Thread(target=self._thdm_load_bom_list_worker, daemon=True).start()
 
-    def _thdm_load_bom_list_worker(self):
-        try:
-            conn = self._get_db_conn()
-            cur  = conn.cursor()
-            where_extra = ""
-            params = []
-            if self._thdm_selected_order_id is not None:
-                where_extra = "  AND  BOM.ParentBizDocId = ?"
-                params = [self._thdm_selected_order_id]
-            # CTE: chỉ lấy Version mới nhất của mỗi BOM.Code (task 7)
-            cur.execute(f"""
-                WITH RankedBOM AS (
-                    SELECT BOM.Id,
-                           BOM.Code,
-                           BOM.Description,
-                           CONVERT(varchar(10), BOM.DocDate, 103) AS DocDate,
-                           BOM.IsActive,
-                           Prd.Name          AS ProductName1,
-                           Dt0.BuiltinOrder0,
-                           Dt.DocNo          AS DocInforFO,
-                           BOM.Version,
-                           ROW_NUMBER() OVER (
-                               PARTITION BY BOM.Code
-                               ORDER BY     ISNULL(TRY_CAST(BOM.Version AS FLOAT), -1) DESC,
-                                            BOM.DocDate DESC
-                           ) AS _rn
-                    FROM   B20BOM AS BOM
-                    LEFT JOIN B20Product        AS Prd ON Prd.Id             = BOM.ProductId1
-                    LEFT JOIN B30BizDocDetailSO AS Dt0 ON Dt0.DetailRowId_SO = BOM.DetailRowId_SO
-                    LEFT JOIN B30BizDocSO       AS Dt  ON Dt.BizDocId        = BOM.ParentBizDocId
-                    WHERE  BOM.IsGroup  = 0
-                      AND  BOM.IsActive = 1
-                      {where_extra}
-                )
-                SELECT Id, Code, Description, DocDate, IsActive,
-                       ProductName1, BuiltinOrder0, DocInforFO, Version
-                FROM   RankedBOM
-                WHERE  _rn = 1
-                ORDER  BY TRY_CAST(BuiltinOrder0 AS FLOAT), Code
-            """, params)
-            cols = [c[0] for c in cur.description]
-            rows = [dict(zip(cols, r)) for r in cur.fetchall()]
-            conn.close()
-            self.after(0, lambda d=rows: self._thdm_load_bom_list_done(d, None))
-        except Exception as e:
-            self.after(0, lambda err=e: self._thdm_load_bom_list_done([], str(err)))
 
-    def _thdm_load_bom_list_done(self, rows, error):
-        dt = THEMES[ctk.get_appearance_mode()]
-        if error:
-            self.lbl_thdm_status.config(text=f"❌  {error}", fg=dt["log_err"])
-            return
-        self._thdm_all_bom_rows = rows
-        self._thdm_checked_ids  = set()
-        self._thdm_filter_bom()
-        self.lbl_thdm_status.config(
-            text=f"✅  {len(rows):,} BOM — chọn BOM rồi chọn file Excel",
-            fg=C["green"])
 
-    def _thdm_filter_bom(self):
-        kw = self.thdm_search_var.get().strip().lower()
-        valid_orders = self._thdm_valid_builtin_orders  # None = không filter
 
-        if _HAS_TKSHEET and self.thdm_bom_sheet is not None:
-            # ── tksheet path ─────────────────────────────────────────────────
-            data = []
-            self._thdm_sheet_row_ids = []
-            for r in self._thdm_all_bom_rows:
-                code      = r.get("Code",         "") or ""
-                item_name = r.get("ProductName1", "") or ""
-                version   = str(r.get("Version",  "") or "")
-                muc_so    = str(r.get("BuiltinOrder0", "") or "")
-                if valid_orders is not None and muc_so not in valid_orders:
-                    continue
-                if kw and kw not in code.lower() \
-                       and kw not in item_name.lower() \
-                       and kw not in version.lower():
-                    continue
-                chk = "☑" if r["Id"] in self._thdm_checked_ids else "☐"
-                data.append([chk, muc_so, code, item_name, version])
-                self._thdm_sheet_row_ids.append(r["Id"])
-            self.thdm_bom_sheet.set_sheet_data(data, reset_col_positions=False)
-            self._thdm_apply_sheet_highlights()
-        else:
-            # ── Fallback: ttk.Treeview path ──────────────────────────────────
-            tree = self.thdm_bom_tree
-            for iid in tree.get_children():
-                tree.delete(iid)
-            for r in self._thdm_all_bom_rows:
-                code      = r.get("Code",         "") or ""
-                item_name = r.get("ProductName1", "") or ""
-                version   = str(r.get("Version",  "") or "")
-                muc_so    = str(r.get("BuiltinOrder0", "") or "")
-                if valid_orders is not None and muc_so not in valid_orders:
-                    continue
-                if kw and kw not in code.lower() \
-                       and kw not in item_name.lower() \
-                       and kw not in version.lower():
-                    continue
-                rid = str(r["Id"])
-                chk = "☑" if r["Id"] in self._thdm_checked_ids else "☐"
-                tag = "checked" if r["Id"] in self._thdm_checked_ids else "unchecked"
-                tree.insert("", "end", iid=rid,
-                    values=(chk, muc_so, code, item_name, version),
-                    tags=(tag,))
 
-    def _thdm_bom_autostretch(self):
-        """Giãn cột 'Tên SP' (index 3) lấp hết chiều ngang trống của BOM list."""
-        self._thdm_bom_stretch_job = None
-        sh = getattr(self, 'thdm_bom_sheet', None)
-        if not (_HAS_TKSHEET and sh is not None):
-            return
-        try:
-            total  = sh.MT.winfo_width()
-            others = sum(int(sh.column_width(column=c)) for c in (0, 1, 2, 4))
-            w = total - others - 6
-            if w > 200:
-                sh.column_width(column=3, width=w)
-        except Exception:
-            pass
 
-    def _thdm_apply_sheet_highlights(self):
-        """Tô màu các row đang được check trong tksheet."""
-        self.thdm_bom_sheet.dehighlight_all()
-        checked_rows = [
-            i for i, rid in enumerate(self._thdm_sheet_row_ids)
-            if rid in self._thdm_checked_ids
-        ]
-        if checked_rows:
-            self.thdm_bom_sheet.highlight_rows(
-                rows=checked_rows, bg="#1e3a5f", fg="#90c8f8", redraw=True)
-        else:
-            self.thdm_bom_sheet.refresh()
 
-    def _thdm_on_bom_click(self, event=None):
-        if _HAS_TKSHEET and self.thdm_bom_sheet is not None:
-            # tksheet path — được gọi từ fallback Treeview nếu sheet=None
-            pass   # xử lý ở _thdm_process_sheet_click (gọi qua MT.bind)
-        else:
-            # ── Fallback: ttk.Treeview path ──────────────────────────────────
-            iid = self.thdm_bom_tree.identify_row(event.y)
-            if not iid:
-                return
-            iid_to_id = {str(r["Id"]): r["Id"] for r in self._thdm_all_bom_rows}
-            clicked_id = iid_to_id.get(iid)
-            if clicked_id is None:
-                return
-            new_checked  = clicked_id not in self._thdm_checked_ids
-            selected_iids = set(self.thdm_bom_tree.selection())
-            selected_iids.add(iid)
-            for s_iid in selected_iids:
-                s_id = iid_to_id.get(s_iid)
-                if s_id is None:
-                    continue
-                if new_checked:
-                    self._thdm_checked_ids.add(s_id)
-                else:
-                    self._thdm_checked_ids.discard(s_id)
-                chk  = "☑" if new_checked else "☐"
-                tag  = "checked" if new_checked else "unchecked"
-                vals = list(self.thdm_bom_tree.item(s_iid, "values"))
-                vals[0] = chk
-                self.thdm_bom_tree.item(s_iid, values=vals, tags=(tag,))
-            self._thdm_update_ui()
 
-    def _thdm_process_sheet_click(self):
-        """Xử lý toggle checkbox sau khi tksheet update selection (gọi qua after(40))."""
-        if not (_HAS_TKSHEET and self.thdm_bom_sheet is not None):
-            return
-        sheet = self.thdm_bom_sheet
-        selected_rows = []
 
-        # Method 1: get_selected_rows — works khi row header được click
-        try:
-            r = sheet.get_selected_rows()
-            selected_rows = sorted(r)
-        except Exception:
-            pass
-
-        # Method 2: get_selected_cells — works khi enable_bindings("row_select") chọn cell
-        if not selected_rows:
-            try:
-                cells = sheet.get_selected_cells()
-                selected_rows = sorted({c[0] for c in cells})
-            except Exception:
-                pass
-
-        # Method 3: get_currently_selected — fallback cuối
-        if not selected_rows:
-            try:
-                sel = sheet.get_currently_selected()
-                if sel is not None:
-                    if hasattr(sel, 'row'):
-                        selected_rows = [sel.row]
-                    elif isinstance(sel, (list, tuple)) and len(sel) > 0:
-                        first = sel[0]
-                        selected_rows = [first[0] if isinstance(first, (list, tuple)) else first]
-            except Exception:
-                pass
-
-        if not selected_rows:
-            return
-        row_idx = selected_rows[0]
-        if row_idx >= len(self._thdm_sheet_row_ids):
-            return
-
-        clicked_id  = self._thdm_sheet_row_ids[row_idx]
-        new_checked = clicked_id not in self._thdm_checked_ids
-
-        for r in selected_rows:
-            if r >= len(self._thdm_sheet_row_ids):
-                continue
-            row_id = self._thdm_sheet_row_ids[r]
-            if new_checked:
-                self._thdm_checked_ids.add(row_id)
-            else:
-                self._thdm_checked_ids.discard(row_id)
-            chk = "☑" if new_checked else "☐"
-            try:
-                self.thdm_bom_sheet.set_cell_data(r, 0, chk, redraw=False)
-            except Exception:
-                try:
-                    self.thdm_bom_sheet.set_cell_data(r, 0, chk)
-                except Exception:
-                    pass
-
-        self._thdm_apply_sheet_highlights()
-        self._thdm_update_ui()
-
-    def _thdm_toggle_all(self, select: bool):
-        for r in self._thdm_all_bom_rows:
-            if select:
-                self._thdm_checked_ids.add(r["Id"])
-            else:
-                self._thdm_checked_ids.discard(r["Id"])
-        self._thdm_filter_bom()
-        self._thdm_update_ui()
-
-    def _thdm_update_ui(self):
-        n = len(self._thdm_checked_ids)
-        self.lbl_thdm_sel_count.config(
-            text=f"{n} BOM được chọn",
-            fg=C["accent"] if n else C["text"])
-        self.btn_thdm_aggregate.configure(state="normal")
 
     # ── THDM: Đọc Excel và preview ────────────────────────────────────────────
 
-    def _thdm_aggregate(self):
-        if not self._thdm_excel_path:
-            self._show_msg("Chưa chọn file Excel",
-                "Vui lòng nhấn '📂 Chọn file Excel THDM' để chọn file.", kind="info")
-            return
-        self.btn_thdm_aggregate.configure(state="disabled", text="⏳  Đang đọc Excel...")
-        self.btn_thdm_export_xl.configure(state="disabled")
-        self.btn_thdm_view_sql.configure(state="disabled")
-        self.btn_thdm_validate.configure(state="disabled")
-        self.btn_thdm_insert.configure(state="disabled")
-        self._thdm_clear_preview_trees()
-        path = self._thdm_excel_path
-        threading.Thread(target=self._thdm_aggregate_worker, args=(path,), daemon=True).start()
 
-    def _thdm_aggregate_worker(self, path):
-        try:
-            mapping   = load_mapping()
-            cfg       = mapping.get('_CONFIG', {})
 
-            # Tìm tất cả child sections của THDM_HEADER (theo thứ tự khai báo trong _CONFIG)
-            child_sections = [
-                sec for sec, info in cfg.items()
-                if info.get('parent_section') == 'THDM_HEADER'
-            ]
-            if not child_sections:
-                raise ValueError("Không tìm thấy child section nào của THDM_HEADER trong _CONFIG.")
 
-            # ── Query B20BOMDetail cho các BOM đã chọn ─────────────────────────
-            bom_qty_dict = None
-            bom_qty_warn = None
-            if self._thdm_checked_ids:
-                try:
-                    conn_bom = self._get_db_conn()
-                    bom_qty_dict = _thdm_load_bom_qty_dict(conn_bom, self._thdm_checked_ids)
-                    conn_bom.close()
-                except Exception as e_bom:
-                    bom_qty_warn = str(e_bom)
-                    bom_qty_dict = None
 
-            # Mở file 3 lần (cached / live formula / hidden detection) — dùng chung
-            wb_c, wb_l, wb_h = _thdm_open_workbook(path)
 
-            # Detect sheet TH VT — tất cả THDM child sections đều parse sheet này
-            sheet_name = _thdm_find_thvt_sheet(wb_c)
-            if not sheet_name:
-                raise ValueError(
-                    "Không tìm thấy sheet 'TH VT' trong file Excel.\n"
-                    "Tên sheet hợp lệ: 'TH VT', 'THVT', 'TH_VT', 'Tổng hợp vật tư'.")
-
-            rows_out = []
-            for sec in child_sections:
-                sec_cfg    = cfg[sec]
-                sec_map    = mapping.get(sec, [])
-                expand_muc = sec_cfg.get('expand_muc', False)
-                row_filter = sec_cfg.get('row_filter') or ''
-
-                rows_raw = _thdm_parse_thvt_sheet(
-                    wb_c, wb_l, wb_h, sheet_name, sec_map,
-                    expand_muc=expand_muc,
-                    bom_qty_dict=bom_qty_dict if expand_muc else None,
-                )
-
-                # Áp dụng RowFilter nếu có (vd: 'Quantity>0')
-                if row_filter:
-                    rows_raw = _thdm_apply_row_filter(rows_raw, row_filter)
-
-                # Chuẩn hoá + gán tag _section cho từng row
-                for rd in rows_raw:
-                    row_norm = {'_section': sec}
-                    for k, v in rd.items():
-                        row_norm[k] = v.strip() if isinstance(v, str) else v
-                    rows_out.append(row_norm)
-
-            wb_c.close()
-            if wb_l: wb_l.close()
-            if wb_h: wb_h.close()
-
-            self.after(0, lambda d=rows_out, w=bom_qty_warn: self._thdm_aggregate_done(d, None, bom_warn=w))
-        except Exception as e:
-            self.after(0, lambda err=e: self._thdm_aggregate_done([], str(err)))
-
-    def _thdm_clear_preview_trees(self):
-        """Xóa dữ liệu tab Đầu phiếu + tất cả tab section detail."""
-        for tr in [self._thdm_header_tree] + list(self._thdm_sec_trees.values()):
-            ch = tr.get_children()
-            if ch:
-                tr.delete(*ch)
-
-    def _thdm_fill_header_preview(self):
-        """Đổ preview THDM_HEADER — CÙNG cấu trúc với tab detail:
-        header = Ten_Excel (rỗng → SQL_Column), hàng phụ xanh = SQL_Column,
-        hàng giá trị = resolve nhẹ (display-only, không cần DB). Cột có
-        Ten_Excel xếp trước. Giá trị SP/tự sinh là placeholder, thật khi INSERT."""
-        tr = self._thdm_header_tree
-        ch = tr.get_children()
-        if ch:
-            tr.delete(*ch)
-        if not getattr(self, '_thdm_now_str', None):
-            self._thdm_now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        defs = _thdm_get_detail_col_defs((self.mapping or {}).get('THDM_HEADER', []))
-        self._thdm_header_col_defs = defs
-
-        import tkinter.font as _tkf
-        _hfont = _tkf.Font(family="Segoe UI", size=12, weight="bold")
-        _font  = _tkf.Font(family="Segoe UI", size=12)
-        tr["columns"] = tuple(d['sql_col'] for d in defs)
-        for d in defs:
-            htxt = d['ten_excel'] or d['sql_col']
-            val  = self._thdm_col_display(d, 0)
-            tr.heading(d['sql_col'], text=htxt, anchor='center')
-            w = max(_hfont.measure(htxt), _font.measure(d['sql_col']),
-                    _font.measure(str(val))) + 24
-            # Cột căn trái; chỉ 2 dòng header (tiêu đề + hàng phụ SQL) căn giữa
-            tr.column(d['sql_col'], width=max(min(w, 320), 80),
-                      anchor='w', stretch=False)
-        # Hàng phụ (xanh) = SQL_Column ; hàng giá trị = resolved
-        tr.insert("", "end", values=tuple(d['sql_col'] for d in defs),
-                  tags=("sql_names",))
-        tr.insert("", "end",
-                  values=tuple(self._thdm_col_display(d, 0) for d in defs),
-                  tags=("row_normal",))
-        # Căn giữa riêng hàng phụ SQL_Column (dòng giá trị vẫn căn trái)
-        if hasattr(tr, 'center_rows_by_tag'):
-            tr.center_rows_by_tag("sql_names")
-
-    def _thdm_aggregate_done(self, rows, error, bom_warn=None):
-        self.btn_thdm_aggregate.configure(state="normal", text="📊  ③ Tổng hợp")
-        # Switch từ pre-preview → result frame
-        if hasattr(self, '_thdm_pre_frame'):
-            self._thdm_pre_frame.grid_remove()
-            self._thdm_result_frame.grid()
-        if error:
-            self._show_msg("Lỗi đọc Excel", str(error))
-            return
-        if bom_warn:
-            self._show_msg("Cảnh báo BOM",
-                f"Không load được định mức từ B20BOMDetail:\n{bom_warn}\n\n"
-                "QuantityFactory sẽ dùng tỉ lệ phân bổ thay vì ĐỊNH MỨC thực tế.",
-                kind="warning")
-        self._thdm_preview_data = rows
-        # Tổng hợp mới → reset trạng thái kiểm tra + filter
-        self._thdm_validated        = False
-        self._thdm_val_errors       = {}
-        self._thdm_val_lk_fails     = {}
-        self._thdm_validate_caches  = {}
-        self._thdm_lk_recs          = {}
-        self._fuzzy_resolutions     = {}
-        self._thdm_filter_mode      = "all"
-        _sec_counts = self._thdm_fill_section_trees()
-        self._thdm_update_filter_btns()
-
-        # Tab Đầu phiếu
-        self._thdm_fill_header_preview()
-
-        if rows:
-            self.btn_thdm_export_xl.configure(state="normal")
-            self.btn_thdm_view_sql.configure(state="normal")
-            self.btn_thdm_validate.configure(state="normal")
-            # INSERT chỉ bật sau khi Kiểm tra đạt (giống luồng BOM)
-            self.btn_thdm_insert.configure(state="disabled")
-            _detail = "  ·  ".join(
-                f"{(self.mapping.get('_CONFIG', {}).get(s, {}).get('label') or s)}: {n:,}"
-                for s, n in _sec_counts.items())
-            self.lbl_thdm_result.config(
-                text=f"📊  {len(rows):,} dòng ({_detail}) — bấm ④ Kiểm tra",
-                fg=C["yellow"])
-
-    def _thdm_fill_section_trees(self, error_map=None, visible_only=False):
-        """Đổ dữ liệu từng section vào tab riêng. error_map (optional):
-        {(section, idx_trong_section): [msg,...]} → tô đỏ dòng lỗi.
-        visible_only=True → chỉ render dòng có lỗi (filter ⚠).
-        Trả về dict {section: số_dòng}."""
-        error_map = error_map or {}
-        # Chỉ xóa các section detail tabs — KHÔNG xóa header tab.
-        # Header được fill riêng bởi _thdm_fill_header_preview() và phải
-        # được giữ nguyên khi filter/validate để tab Header không trống.
-        for _st in self._thdm_sec_trees.values():
-            _ch = _st.get_children()
-            if _ch:
-                _st.delete(*_ch)
-        self._thdm_sec_visible = {}
-
-        def _fmt(v, is_num=False):
-            if v is None:
-                return ""
-            if is_num:
-                try:
-                    return f"{float(v):,.4f}"
-                except (TypeError, ValueError):
-                    pass
-            return str(v) if v != "" else ""
-
-        self._thdm_now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        rows = self._thdm_preview_data
-        counts = {}
-        for _tab_i, (sec, tr) in enumerate(self._thdm_sec_trees.items(), start=1):
-            defs     = self._thdm_sec_col_defs.get(sec, [])
-            sec_rows = [r for r in rows if r.get('_section') == sec]
-            counts[sec] = len(sec_rows)
-            # Số lỗi thực tế luôn tính trên toàn section (không phụ thuộc filter)
-            n_err_sec = sum(1 for i in range(len(sec_rows)) if (sec, i) in error_map)
-            # Chỉ hiện dòng lỗi hay tất cả
-            if visible_only:
-                vis_indices = [i for i in range(len(sec_rows))
-                               if (sec, i) in error_map]
-            else:
-                vis_indices = list(range(len(sec_rows)))
-            self._thdm_sec_visible[sec] = vis_indices
-            # Hàng phụ (xanh) hiển thị SQL_Column tương ứng mỗi cột
-            tr.insert("", "end",
-                      values=tuple(d['sql_col'] for d in defs),
-                      tags=("sql_names",))
-            for i in vis_indices:
-                r = sec_rows[i]
-                if (sec, i) in error_map:
-                    tag = "err_row"
-                else:
-                    tag = "row_normal" if i % 2 == 0 else "row_alt"
-                vals = []
-                for d in defs:
-                    v = r.get(d['sql_col'])
-                    # Cột không phải Excel & chưa có sẵn trong row → hiện giá
-                    # trị sẽ resolve khi INSERT (CoDinh/UILookup/HeThong...)
-                    if v is None and (d.get('nguon_dl') or 'Excel') != 'Excel':
-                        vals.append(self._thdm_col_display(d, i))
-                    else:
-                        vals.append(_fmt(v, is_num=d.get('anchor') == 'e'))
-                tr.insert("", "end", values=tuple(vals), tags=(tag,))
-            lbl = (self.mapping.get('_CONFIG', {}).get(sec, {}).get('label')
-                   or sec)
-            _cnt = (f"{len(sec_rows):,}" if not n_err_sec
-                    else f"{len(sec_rows):,}, ⚠{n_err_sec}")
-            try:
-                self._thdm_result_nb.tab(_tab_i, text=f"  {lbl} ({_cnt})  ")
-            except Exception:
-                pass
-        return counts
 
     # ── THDM Error UX: click / double-click / filter / quick-map ──────────────
 
-    def _thdm_mt_click(self, event, sec):
-        """Feature 1: cell_select / rc_select callback từ tksheet extra_bindings.
-        event là EventDataDict; row index nằm ở event.selected.row."""
-        try:
-            vis_row = event.selected.row
-        except (AttributeError, TypeError):
-            return
-        self.after(20, lambda r=vis_row: self._thdm_on_row_select(sec, r))
 
-    def _thdm_on_row_select(self, sec, vis_row):
-        """Feature 1: hiện lỗi dòng đang chọn lên thanh chân app (lbl_thdm_err_bar)."""
-        if vis_row == 0:
-            return   # dòng sql_names (row header phụ)
-        vis_indices = self._thdm_sec_visible.get(sec, [])
-        data_idx = vis_indices[vis_row - 1] if vis_row - 1 < len(vis_indices) else None
-        if data_idx is None:
-            return
-        msgs = self._thdm_val_errors.get((sec, data_idx))
-        if msgs:
-            self.lbl_thdm_err_bar.configure(
-                text=f"⚠ Dòng {data_idx + 1}: {' | '.join(msgs)}")
-        else:
-            self.lbl_thdm_err_bar.configure(text="")
 
-    def _thdm_mt_dblclick(self, event, sec):
-        """Feature 2: extra_double_b1_func callback — raw tkinter event (.x, .y).
-        Dùng MT.identify_row(y=event.y) để lấy row index."""
-        if getattr(self, '_fuzzy_collect_mode', False):
-            return  # validate đang chạy background → tránh race condition
-        tr = self._thdm_sec_trees.get(sec)
-        if tr is None:
-            return
-        try:
-            vis_row = tr.sheet.MT.identify_row(y=event.y)
-        except Exception:
-            return
-        if vis_row is None or vis_row == 0:
-            return
-        vis_indices = self._thdm_sec_visible.get(sec, [])
-        data_idx = vis_indices[vis_row - 1] if vis_row - 1 < len(vis_indices) else None
-        if data_idx is None:
-            return
-        if (sec, data_idx) not in self._thdm_val_lk_fails:
-            return   # dòng không có lỗi lookup → để edit_cell mở bình thường
-        # Đóng cell editor trước khi mở dialog Quick Map
-        try:
-            tr.sheet.MT.hide_text_editor()
-        except Exception:
-            pass
-        self._thdm_quick_map(sec, data_idx)
 
-    def _thdm_quick_map(self, sec, data_idx):
-        """Feature 2+3: Mở batch fuzzy dialog cho tất cả lỗi lookup của dòng,
-        áp kết quả, rồi hỏi batch-fill cho các dòng cùng ItemName."""
-        fails = self._thdm_val_lk_fails.get((sec, data_idx))
-        if not fails:
-            return
-        sec_rows = [r for r in self._thdm_preview_data if r.get('_section') == sec]
-        row = sec_rows[data_idx] if data_idx < len(sec_rows) else None
-        if row is None:
-            return
 
-        # Tạm bật collect mode để _lookup_generic build candidates (không show popup)
-        _saved_collect = getattr(self, '_fuzzy_collect_mode', False)
-        _saved_pending = list(getattr(self, '_fuzzy_pending', []))
-        _saved_ctx     = dict(getattr(self, '_fuzzy_ctx', {}))
-        self._fuzzy_collect_mode = True
-        self._fuzzy_pending      = []
-        for sql_col, raw_val, cache_key, lk_rec in fails:
-            cache = self._thdm_validate_caches.get(sec, {}).get(cache_key, [])
-            if not cache:
-                continue
-            kl = lk_rec.get('kieu_lookup', 'fuzzy_code')
-            self._fuzzy_ctx = {
-                'section': sec,
-                'field'  : lk_rec.get('ten_excel') or sql_col,
-                'row_idx': data_idx + 1,
-            }
-            self._lookup_generic(str(raw_val), cache, kl, _cache_key=cache_key)
-        pending = list(self._fuzzy_pending)
-        self._fuzzy_collect_mode = _saved_collect
-        self._fuzzy_pending      = _saved_pending
-        self._fuzzy_ctx          = _saved_ctx
 
-        if not pending:
-            return
 
-        resolutions = self._show_batch_fuzzy_dialog(pending)
-        if not resolutions:
-            return
 
-        fixed_any = False
-        for sql_col, raw_val, cache_key, lk_rec in fails:
-            res_key    = (str(raw_val), cache_key)
-            if res_key not in resolutions:
-                continue
-            chosen_val = resolutions[res_key]
-            if chosen_val is None:
-                continue   # user bỏ qua → không ghi đè
 
-            # Ghi nhận mapping; giữ raw code trong preview_data để lookup lại đúng
-            if not hasattr(self, '_fuzzy_resolutions'):
-                self._fuzzy_resolutions = {}
-            self._fuzzy_resolutions[(str(raw_val), cache_key)] = chosen_val
-
-            # Xóa msg lỗi tương ứng
-            err_key = (sec, data_idx)
-            if err_key in self._thdm_val_errors:
-                old_msg = f"Mã '{raw_val}' không tồn tại trong DB"
-                self._thdm_val_errors[err_key] = [
-                    m for m in self._thdm_val_errors[err_key] if m != old_msg]
-                if not self._thdm_val_errors[err_key]:
-                    del self._thdm_val_errors[err_key]
-                    if err_key in self._thdm_val_lk_fails:
-                        del self._thdm_val_lk_fails[err_key]
-            fixed_any = True
-
-            # Batch auto-fill dòng cùng ItemName
-            item_name_col = None
-            for lk in self._thdm_lk_recs.get(sec, []):
-                if lk.get('sql_col') and 'name' in lk['sql_col'].lower():
-                    item_name_col = lk['sql_col']
-                    break
-            cur_name  = row.get(item_name_col) if item_name_col else None
-            same_rows = []
-            if cur_name:
-                for other_idx, other_row in enumerate(sec_rows):
-                    if other_idx == data_idx:
-                        continue
-                    if other_row.get(item_name_col) == cur_name:
-                        if any(f[0] == sql_col
-                               for f in self._thdm_val_lk_fails.get((sec, other_idx), [])):
-                            same_rows.append(other_idx)
-            if same_rows:
-                confirm = self._ask_msg(
-                    "Áp dụng hàng loạt?",
-                    f"Tìm thấy {len(same_rows)} dòng khác có cùng \"{cur_name}\" "
-                    f"và cùng lỗi cột {lk_rec.get('ten_excel') or sql_col}.\n"
-                    "Áp dụng giá trị vừa chọn cho tất cả?")
-                if confirm:
-                    for other_idx in same_rows:
-                        ek = (sec, other_idx)
-                        # Đọc raw value gốc trước khi ghi đè
-                        other_raw = next(
-                            (f[1] for f in self._thdm_val_lk_fails.get(ek, [])
-                             if f[0] == sql_col),
-                            raw_val)
-                        self._fuzzy_resolutions[(str(other_raw), cache_key)] = chosen_val
-                        if ek in self._thdm_val_errors:
-                            old_msg2 = f"Mã '{other_raw}' không tồn tại trong DB"
-                            self._thdm_val_errors[ek] = [
-                                m for m in self._thdm_val_errors[ek]
-                                if m != old_msg2]
-                            if not self._thdm_val_errors[ek]:
-                                del self._thdm_val_errors[ek]
-                                if ek in self._thdm_val_lk_fails:
-                                    self._thdm_val_lk_fails[ek] = [
-                                        f for f in self._thdm_val_lk_fails[ek]
-                                        if f[0] != sql_col]
-                                    if not self._thdm_val_lk_fails[ek]:
-                                        del self._thdm_val_lk_fails[ek]
-
-        if fixed_any:
-            self._thdm_apply_filter(self._thdm_filter_mode)
-            self._thdm_update_error_labels()
-
-    def _thdm_toggle_filter(self, value):
-        """Feature 4: CTkSegmentedButton callback."""
-        if "lỗi" in value.lower() or "⚠" in value:
-            self._thdm_filter_mode = "errors_only"
-        else:
-            self._thdm_filter_mode = "all"
-        self._thdm_apply_filter(self._thdm_filter_mode)
-
-    def _thdm_apply_filter(self, mode="all"):
-        """Re-render bảng với filter mode đang chọn."""
-        visible_only = (mode == "errors_only")
-        self._thdm_fill_section_trees(
-            error_map=self._thdm_val_errors,
-            visible_only=visible_only)
-        # Force synchronous flush — SheetTable dùng after_idle (deferred); flush
-        # ngay tại đây để tksheet.set_sheet_data được gọi trước khi trả event loop.
-        for _tr in self._thdm_sec_trees.values():
-            try:
-                _tr._flush()
-            except Exception:
-                pass
-
-    def _thdm_update_filter_btns(self):
-        """Feature 4: Cập nhật label CTkSegmentedButton (Tất cả N / ⚠ Dòng lỗi N)."""
-        n_all = len(self._thdm_preview_data)
-        n_err = len(self._thdm_val_errors)
-        try:
-            self._thdm_filter_seg.configure(
-                values=[f"Tất cả ({n_all})", f"⚠ Dòng lỗi ({n_err})"])
-            # Giữ selection theo filter_mode hiện tại
-            if self._thdm_filter_mode == "errors_only":
-                self._thdm_filter_seg.set(f"⚠ Dòng lỗi ({n_err})")
-            else:
-                self._thdm_filter_seg.set(f"Tất cả ({n_all})")
-        except Exception:
-            pass
-
-    def _thdm_update_error_labels(self):
-        """Cập nhật lbl_thdm_result + trạng thái nút Insert sau Quick Map."""
-        n_err = len(self._thdm_val_errors)
-        self._thdm_update_filter_btns()
-        if n_err == 0:
-            self._thdm_validated = True
-            self.btn_thdm_insert.configure(state="normal")
-            self.lbl_thdm_result.config(
-                text="✅  Tất cả lỗi đã được sửa — sẵn sàng tạo THDM", fg=C["green"])
-        else:
-            self.lbl_thdm_result.config(
-                text=f"❌  Còn {n_err} dòng lỗi", fg=C["red"])
-
-    def _thdm_col_display(self, d, ridx):
-        """Giá trị hiển thị cho cột không phải Excel (resolve nhẹ, không cần DB).
-        Giống logic tab Header — giá trị thật vẫn sinh khi INSERT."""
-        nguon = d.get('nguon_dl') or ''
-        mac   = d.get('mac_dinh') or ''
-        if nguon == 'CoDinh':
-            return '' if mac.upper() in ('NULL', 'EMPTY', '') else mac
-        if nguon == 'UILookup':
-            v = {
-                'creator':    self._thdm_creator_user_id or self._current_creator_user_id,
-                'product_id': self._thdm_selected_product_id,
-                'order_id':   self._thdm_selected_order_id,
-                'period_id':  self._thdm_selected_period_id,
-            }.get(mac)
-            return '' if v in (None, '') else str(v)
-        if nguon == 'HeThong':
-            mu = mac.upper()
-            if mu == 'NOW':          return self._thdm_now_str
-            if mac == 'BizDocId_SO': return str(self._thdm_selected_order_id or '')
-            if mu == 'AUTO_INC':     return str(ridx + 1)
-            return '(tự sinh)'
-        if nguon in ('SP', 'TinhToan', 'Lookup', 'MucLookup'):
-            return '(khi INSERT)'
-        if nguon == 'Excel':
-            return '(từ Excel)'
-        return ''
 
     # ── THDM: Kiểm tra dữ liệu trước INSERT (giống Validate bên BOM) ───────────
-    def _thdm_validate(self):
-        if not self._thdm_preview_data:
-            self._show_msg("Chưa có dữ liệu",
-                "Hãy bấm 📊 Tổng hợp trước khi Kiểm tra.", kind="info")
-            return
-        self.btn_thdm_validate.configure(state="disabled", text="⏳  Đang kiểm tra...")
-        self.btn_thdm_insert.configure(state="disabled")
-        self.lbl_thdm_result.config(text="⏳  Đang kiểm tra dữ liệu...", fg=self._text_fg)
-        self._fuzzy_collect_mode = True
-        self._fuzzy_pending      = []
-        self._fuzzy_ctx          = {}
-        threading.Thread(target=self._thdm_validate_worker, daemon=True).start()
 
-    def _thdm_validate_worker(self):
-        # Reset lỗi cũ và cache — đảm bảo ô đã sửa tay được re-validate từ đầu
-        self._thdm_val_errors      = {}
-        self._thdm_val_lk_fails    = {}
-        self._thdm_validate_caches = {}
-        # _fuzzy_resolutions KHÔNG clear: lựa chọn user đã xác nhận được giữ lại
-        # qua các lần Kiểm tra. Nếu mã vừa được bổ sung vào DB, Tier 1/2 sẽ tìm
-        # thấy trực tiếp trước khi chạm tới _fuzzy_resolutions — không bị mask.
 
-        conn = None
-        try:
-            mapping = load_mapping()
-            cfg     = mapping.get('_CONFIG', {})
-            child_sections = [s for s, i in cfg.items()
-                              if i.get('parent_section') == 'THDM_HEADER']
 
-            # FIX 2: Refresh các ô TRỐNG trong _thdm_preview_data từ file Excel.
-            # Khi user bổ sung Mã VTTB vào file Excel rồi bấm Kiểm tra, dữ liệu
-            # trong _thdm_preview_data vẫn là giá trị cũ (None/rỗng) từ lần Tổng
-            # hợp trước. Re-parse file Excel và cập nhật các ô đang trống — ô đã
-            # có giá trị (kể cả edit thủ công trên UI) được giữ nguyên.
-            import os as _os
-            _xls_path = getattr(self, '_thdm_excel_path', None)
-            if _xls_path and _os.path.exists(_xls_path):
-                try:
-                    _wb_c, _wb_l, _wb_h = _thdm_open_workbook(_xls_path)
-                    _sn = _thdm_find_thvt_sheet(_wb_c)
-                    if _sn:
-                        for _sec in child_sections:
-                            _sm   = mapping.get(_sec, [])
-                            _scfg = cfg.get(_sec, {})
-                            _exp  = _scfg.get('expand_muc', False)
-                            _rf   = _scfg.get('row_filter') or ''
-                            _fresh = _thdm_parse_thvt_sheet(
-                                _wb_c, _wb_l, _wb_h, _sn, _sm, expand_muc=_exp)
-                            if _rf:
-                                _fresh = _thdm_apply_row_filter(_fresh, _rf)
-                            _sec_rows = [r for r in self._thdm_preview_data
-                                         if r.get('_section') == _sec]
-                            for _old, _new in zip(_sec_rows, _fresh):
-                                for _k, _v in _new.items():
-                                    if _k == '_section':
-                                        continue
-                                    _old_v    = _old.get(_k)
-                                    _old_emp  = (_old_v is None
-                                                 or str(_old_v).strip() == '')
-                                    _new_emp  = (_v is None
-                                                 or (isinstance(_v, str)
-                                                     and _v.strip() == ''))
-                                    if _old_emp and not _new_emp:
-                                        _old[_k] = (_v.strip()
-                                                     if isinstance(_v, str) else _v)
-                    _wb_c.close()
-                    if _wb_l: _wb_l.close()
-                    if _wb_h: _wb_h.close()
-                except Exception:
-                    pass  # re-parse thất bại → tiếp tục với data hiện tại
-
-            conn        = self._get_db_conn()
-            errors      = {}   # (section, idx) → [msg,...]
-            lk_fails    = {}   # (section, idx) → [(sql_col, raw, key, lk_rec),...]
-            all_caches  = {}   # {sec: {cache_key: entries}}
-            all_lk_recs = {}   # {sec: [lk_rec,...]}
-            for sec in child_sections:
-                sec_map = mapping.get(sec, [])
-                req_excel = [r for r in sec_map
-                    if str(r.get('bat_buoc', '')).strip() in ('1', '1.0')
-                    and r.get('nguon_dl') == 'Excel' and r.get('sql_col')]
-                lk_recs = [r for r in sec_map
-                    if r.get('nguon_dl') == 'Excel' and r.get('kieu_lookup')
-                    and r.get('bang_master') and r.get('truong_lay_ve')
-                    and r.get('truong_so_sanh')]
-                caches = {}
-                for r in lk_recs:
-                    key = (r['bang_master'], r.get('dieu_kien_master', ''),
-                           r['truong_so_sanh'], r['truong_lay_ve'])
-                    if key not in caches:
-                        try:
-                            caches[key] = self._build_cache_generic(conn, *key)
-                        except Exception as _ce:
-                            # FIX 3: Log rõ khi không build được cache — giúp
-                            # chẩn đoán tại sao lookup thất bại (quyền, tên bảng...).
-                            self._log('cache',
-                                      f"Build cache {r['bang_master']}",
-                                      0, 'Warn', str(_ce), 'warn')
-                            caches[key] = []
-                all_caches[sec]  = caches
-                all_lk_recs[sec] = lk_recs
-                sec_rows = [row for row in self._thdm_preview_data
-                            if row.get('_section') == sec]
-                for idx, row in enumerate(sec_rows):
-                    msgs = []
-                    for rr in req_excel:
-                        v = row.get(rr['sql_col'])
-                        if v is None or str(v).strip() == '':
-                            msgs.append(f"Thiếu {rr.get('ten_excel') or rr['sql_col']}")
-                    for rr in lk_recs:
-                        raw = row.get(rr['sql_col'])
-                        if raw is None or str(raw).strip() == '':
-                            continue   # ô trống đã bắt ở check bắt buộc
-                        key = (rr['bang_master'], rr.get('dieu_kien_master', ''),
-                               rr['truong_so_sanh'], rr['truong_lay_ve'])
-                        # Set context cho collect mode để _fuzzy_pending có đủ thông tin
-                        self._fuzzy_ctx = {
-                            'section': sec,
-                            'field'  : rr.get('ten_excel') or rr['sql_col'],
-                            'row_idx': idx + 1,
-                        }
-                        found, _ = self._lookup_generic(
-                            raw, caches.get(key, []), rr.get('kieu_lookup', 'exact'),
-                            _cache_key=key)
-                        if found is None:
-                            msgs.append(f"Mã '{raw}' không tồn tại trong DB")
-                            lk_fails.setdefault((sec, idx), []).append(
-                                (rr['sql_col'], raw, key, rr))
-                    if msgs:
-                        errors[(sec, idx)] = msgs
-            self._thdm_validate_caches = all_caches
-            self._thdm_lk_recs         = all_lk_recs
-            self._thdm_val_lk_fails    = lk_fails
-            self.after(0, lambda e=errors: self._thdm_validate_done(e, None))
-        except Exception as e:
-            self.after(0, lambda err=str(e): self._thdm_validate_done(None, err))
-        finally:
-            self._fuzzy_collect_mode = False
-            if conn is not None:
-                try:
-                    conn.close()
-                except Exception:
-                    pass
-
-    def _thdm_validate_done(self, errors, err):
-        self.btn_thdm_validate.configure(state="normal", text="🔍  ④ Kiểm tra")
-        if err is not None:
-            self.lbl_thdm_result.config(text="❌  Lỗi kiểm tra", fg=C["red"])
-            self._show_msg("Lỗi kiểm tra", err, kind="error")
-            return
-
-        # Hiện batch fuzzy popup cho tất cả lỗi tra cứu mã
-        pending = getattr(self, '_fuzzy_pending', [])
-        if pending and errors:
-            resolutions = self._show_batch_fuzzy_dialog(pending)
-            if resolutions:
-                self._apply_validate_resolutions(resolutions, errors)
-
-        self._thdm_val_errors = errors
-        self._thdm_validated  = True
-        n_err = len(errors)
-        self._thdm_fill_section_trees(errors)
-        self._thdm_update_filter_btns()
-        if n_err == 0:
-            self.btn_thdm_insert.configure(state="normal")
-            self.lbl_thdm_result.config(
-                text="✅  Kiểm tra đạt — sẵn sàng tạo THDM", fg=C["green"])
-            return
-        self.btn_thdm_insert.configure(state="disabled")
-        self.lbl_thdm_result.config(
-            text=f"❌  {n_err} dòng lỗi — sửa lại rồi bấm Kiểm tra",
-            fg=C["red"])
-        # Nhảy tới tab section có lỗi đầu tiên
-        sec_first = next(iter(errors))[0]
-        for _ti, _s in enumerate(self._thdm_sec_trees.keys(), start=1):
-            if _s == sec_first:
-                try:
-                    self._thdm_result_nb.select(_ti)
-                except Exception:
-                    pass
-                break
-        # Liệt kê tối đa 15 lỗi còn lại (sau khi đã resolve qua batch popup)
-        lbls = self.mapping.get('_CONFIG', {})
-        lines = []
-        for (sec, idx), msgs in list(errors.items())[:15]:
-            _lbl = lbls.get(sec, {}).get('label') or sec
-            lines.append(f"• [{_lbl}] dòng {idx + 1}: {'; '.join(msgs)}")
-        more = f"\n… và {n_err - 15} dòng lỗi khác." if n_err > 15 else ""
-        self._show_msg("Kiểm tra: còn lỗi",
-            f"Còn {n_err} dòng lỗi (đã tô đỏ trong bảng):\n\n"
-            + "\n".join(lines) + more, kind="warning")
-
-    def _apply_validate_resolutions(self, resolutions, errors):
-        """Áp kết quả batch fuzzy dialog vào TOÀN BỘ _thdm_preview_data,
-        xóa lỗi tương ứng khỏi errors và lk_fails."""
-        if not resolutions:
-            return
-        lk_fails = self._thdm_val_lk_fails
-
-        # Bước 1: Từ lk_fails, build bảng (sec, sql_col, raw_str) → (chosen_val, key, rr)
-        # dùng để match tất cả dòng trong preview_data (không chỉ dòng trong lk_fails).
-        apply_map = {}   # (sec, sql_col, raw_str) → (chosen_val, key, rr)
-        for (sec, idx), fails in lk_fails.items():
-            for sql_col, raw, key, rr in fails:
-                chosen_val = resolutions.get((str(raw), key))
-                if chosen_val is not None:
-                    apply_map[(sec, sql_col, str(raw))] = (chosen_val, key, rr)
-
-        if not apply_map:
-            return
-
-        # Bước 2: Ghi nhận mapping vào _fuzzy_resolutions cho TẤT CẢ dòng khớp giá trị
-        # preview_data KHÔNG bị ghi đè — raw code giữ nguyên để lookup lại đúng
-        if not hasattr(self, '_fuzzy_resolutions'):
-            self._fuzzy_resolutions = {}
-        fixed_keys = set()  # (sec, sql_col, raw_str) đã được áp
-        for row in self._thdm_preview_data:
-            sec = row.get('_section', '')
-            for (map_sec, sql_col, raw_str), (chosen_val, _key, _rr) in apply_map.items():
-                if map_sec != sec:
-                    continue
-                if str(row.get(sql_col, '')) == raw_str:
-                    self._fuzzy_resolutions[(raw_str, _key)] = chosen_val
-                    fixed_keys.add((sec, sql_col, raw_str))
-
-        # Bước 3: Dọn lk_fails và errors cho tất cả entry đã được fix
-        for (sec, idx), fails in list(lk_fails.items()):
-            remaining = []
-            for sql_col, raw, key, rr in fails:
-                if (sec, sql_col, str(raw)) in fixed_keys:
-                    # Xóa msg lỗi tương ứng
-                    if (sec, idx) in errors:
-                        old_msg = f"Mã '{raw}' không tồn tại trong DB"
-                        errors[(sec, idx)] = [
-                            m for m in errors[(sec, idx)] if m != old_msg]
-                        if not errors[(sec, idx)]:
-                            del errors[(sec, idx)]
-                else:
-                    remaining.append((sql_col, raw, key, rr))
-            if remaining:
-                lk_fails[(sec, idx)] = remaining
-            else:
-                del lk_fails[(sec, idx)]
         # Cache giữ nguyên cho Quick Map (double-click dòng lỗi còn sót)
         # Sẽ được reset tự động bởi _thdm_start_validate ở lần Kiểm tra tiếp
 
-    def _thdm_on_cell_edited(self, event, sec):
-        """NHỊP 1: Sync ô vừa sửa → preview_data và bỏ tô đỏ ngay lập tức."""
-        try:
-            vis_row = event.row
-            col_idx = event.column
-            new_val = event.value
-        except (AttributeError, TypeError):
-            return
-        if vis_row == 0:
-            return  # dòng sql_names header
 
-        # ── Resolve data_idx (hoạt động đúng kể cả khi đang lọc ⚠ Dòng lỗi) ──
-        vis_indices = self._thdm_sec_visible.get(sec, [])
-        data_idx = vis_indices[vis_row - 1] if vis_row - 1 < len(vis_indices) else None
-        if data_idx is None:
-            return
-
-        # ── Resolve sql_col ──
-        col_defs = self._thdm_sec_col_defs.get(sec, [])
-        if col_idx >= len(col_defs):
-            return
-        sql_col = col_defs[col_idx].get('sql_col')
-        if not sql_col:
-            return
-
-        # ── Cập nhật _thdm_preview_data ──
-        sec_rows = [r for r in self._thdm_preview_data if r.get('_section') == sec]
-        if data_idx >= len(sec_rows):
-            return
-        sec_rows[data_idx][sql_col] = new_val
-
-        # ── Immediate dehighlight: bỏ tô đỏ dòng vừa sửa ngay lập tức ──
-        err_key = (sec, data_idx)
-        if err_key in self._thdm_val_errors:
-            self._thdm_val_errors.pop(err_key, None)
-            self._thdm_val_lk_fails.pop(err_key, None)
-            if self._thdm_filter_mode == "errors_only":
-                # Khi đang lọc ⚠: re-render để dòng vừa sửa biến khỏi view lỗi
-                self._thdm_apply_filter("errors_only")
-            else:
-                # Chỉ đổi tag + rehighlight — không reload data vào tksheet
-                tr = self._thdm_sec_trees.get(sec)
-                if tr is not None and vis_row < len(tr._rows):
-                    iid = tr._rows[vis_row]
-                    tr._row_tags[iid] = ("row_normal" if data_idx % 2 == 0
-                                         else "row_alt")
-                    tr.rehighlight()
-            self._thdm_update_filter_btns()
-
-        # Data đã thay đổi → cần Kiểm tra lại trước khi Insert
-        self._thdm_validated = False
-        try:
-            self.btn_thdm_insert.configure(state="disabled")
-        except Exception:
-            pass
-        try:
-            self.lbl_thdm_err_bar.configure(text="")
-        except Exception:
-            pass
-
-    def _thdm_on_paste(self, event, sec):
-        """Sync Ctrl+V paste → _thdm_preview_data và SheetTable._data.
-        Gọi bởi extra_bindings ctrl_v sau khi tksheet hoàn tất paste nội bộ."""
-        try:
-            cells = event.get("cells", {}).get("table", {})
-        except (AttributeError, TypeError):
-            return
-        if not cells:
-            return
-
-        vis_indices = self._thdm_sec_visible.get(sec, [])
-        col_defs    = self._thdm_sec_col_defs.get(sec, [])
-        sec_rows    = [r for r in self._thdm_preview_data if r.get('_section') == sec]
-        tr          = self._thdm_sec_trees.get(sec)
-
-        changed_data_idxs = set()
-        for (datarn, datacn) in cells.keys():
-            # event_data["cells"]["table"] lưu giá trị CŨ (trước paste, dùng cho undo).
-            # Giá trị MỚI đã được tksheet ghi vào MT.data → đọc từ đó.
-            if datarn == 0:
-                continue  # hàng sql_names (header phụ)
-            vis_pos = datarn - 1
-            if vis_pos >= len(vis_indices):
-                continue
-            data_idx = vis_indices[vis_pos]
-            if data_idx >= len(sec_rows):
-                continue
-            if datacn >= len(col_defs):
-                continue
-            sql_col = col_defs[datacn].get('sql_col')
-            if not sql_col:
-                continue
-            # Đọc giá trị MỚI từ tksheet MT.data (đã được paste ghi vào)
-            try:
-                new_val = tr.sheet.MT.data[datarn][datacn]
-            except (IndexError, AttributeError, TypeError):
-                continue
-            # Ghi vào _thdm_preview_data (nguồn sự thật)
-            sec_rows[data_idx][sql_col] = new_val
-            # Đồng bộ SheetTable._data để _flush() sau này không ghi đè lại
-            if datarn < len(tr._rows):
-                iid = tr._rows[datarn]
-                row_vals = tr._data.get(iid)
-                if row_vals is not None and datacn < len(row_vals):
-                    row_vals[datacn] = "" if new_val is None else str(new_val)
-            changed_data_idxs.add(data_idx)
-
-        if not changed_data_idxs:
-            return
-
-        # Xóa highlight lỗi cho các dòng vừa chỉnh sửa
-        any_err_cleared = False
-        for data_idx in changed_data_idxs:
-            err_key = (sec, data_idx)
-            if err_key in self._thdm_val_errors:
-                self._thdm_val_errors.pop(err_key, None)
-                self._thdm_val_lk_fails.pop(err_key, None)
-                any_err_cleared = True
-
-        if any_err_cleared:
-            if self._thdm_filter_mode == "errors_only":
-                self._thdm_apply_filter("errors_only")
-            else:
-                if tr is not None:
-                    for data_idx in changed_data_idxs:
-                        try:
-                            vis_pos = vis_indices.index(data_idx)
-                            iid = tr._rows[vis_pos + 1]  # +1 vì row 0 là header
-                            tr._row_tags[iid] = ("row_normal" if data_idx % 2 == 0
-                                                 else "row_alt")
-                        except (ValueError, IndexError):
-                            pass
-                    tr.rehighlight()
-            self._thdm_update_filter_btns()
-
-        self._thdm_validated = False
-        try:
-            self.btn_thdm_insert.configure(state="disabled")
-        except Exception:
-            pass
-        try:
-            self.lbl_thdm_err_bar.configure(text="")
-        except Exception:
-            pass
 
     # ── THDM: Export / View SQL / Insert ──────────────────────────────────────
 
-    def _thdm_export_excel(self):
-        if not self._thdm_preview_data:
-            return
-        import tkinter.filedialog as fd
-        path = fd.asksaveasfilename(
-            title="Xuất Excel THDM",
-            defaultextension=".xlsx",
-            filetypes=[("Excel", "*.xlsx")],
-            initialfile="THDM_Export.xlsx")
-        if not path:
-            return
-        try:
-            import openpyxl
-            from openpyxl.styles import Font, Alignment, PatternFill
-            wb = openpyxl.Workbook()
-            wb.remove(wb.active)
-            # Mỗi section detail 1 sheet riêng (THDM Vật tư / NVL Bổ sung...)
-            for sec, col_defs in self._thdm_sec_col_defs.items():
-                sec_rows = [r for r in self._thdm_preview_data
-                            if r.get('_section') == sec]
-                lbl = (self.mapping.get('_CONFIG', {}).get(sec, {}).get('label')
-                       or sec)
-                ws = wb.create_sheet(title=lbl[:31])
-                # Hàng 1 = Ten_Excel (header xanh), Hàng 2 = SQL_Column
-                for c, d in enumerate(col_defs, 1):
-                    cell = ws.cell(row=1, column=c, value=d['ten_excel'])
-                    cell.font      = Font(bold=True, color="FFFFFF")
-                    cell.fill      = PatternFill("solid", fgColor="1D9E75")
-                    cell.alignment = Alignment(horizontal="center")
-                    scell = ws.cell(row=2, column=c, value=d['sql_col'])
-                    scell.font      = Font(italic=True, color="9CDCFE")
-                    scell.alignment = Alignment(horizontal="center")
-                # Data rows — theo sql_col từ mapping (bắt đầu hàng 3)
-                for i, r in enumerate(sec_rows, 3):
-                    for c, d in enumerate(col_defs, 1):
-                        ws.cell(row=i, column=c, value=r.get(d['sql_col']))
-                # Column widths — convert pixel → char width (~7px per char)
-                for c, d in enumerate(col_defs, 1):
-                    char_w = max(round(d['width'] / 7), 8)
-                    ws.column_dimensions[
-                        openpyxl.utils.get_column_letter(c)].width = char_w
-            wb.save(path)
-            self._show_export_success("Xuất thành công", f"Đã lưu:\n{path}", path)
-        except Exception as e:
-            self._show_msg("Lỗi xuất Excel", str(e))
 
     # ── THDM: Resolve row THVT theo mapping ───────────────────────────────────
-    def _resolve_thdm_thvt_row(self, excel_row, biz_doc_id, sort_order, thvt_map, now):
-        """
-        Resolve 1 dòng THVT từ mapping THDM_THVT.
-        Thin wrapper gọi _resolve_row_mapping() dùng chung với BOM.
 
-        excel_row  : dict {sql_col: value} từ _thdm_preview_data
-        biz_doc_id : UNIQUEIDENTIFIER vừa tạo cho phiếu THDM (hoặc placeholder)
-        sort_order : thứ tự dòng (int, 1-based)
-        thvt_map   : mapping.get('THDM_THVT', [])
-        now        : datetime đồng nhất cho cả batch
-        Returns    : dict {sql_col: value}
-        """
-        # BizDocId_SO = BizDocId string (ví dụ "11034510FO") — nvarchar trong bảng đích
-        _parent = {'BizDocId_SO': self._thdm_selected_order_id}
-        ctx = {
-            'now':           now,
-            'builtin_order': sort_order,
-            'doc_id':        biz_doc_id,
-            'parent_row':    _parent,
-            'parent_fields': {'BizDocId_SO'},
-            'ui_values': {
-                'creator':    self._thdm_creator_user_id or self._current_creator_user_id,
-                'product_id': self._thdm_selected_product_id,
-                'order_id':   self._thdm_selected_order_id,
-                'period_id':  self._thdm_selected_period_id,
-            },
-            'skip_nguon': {'SP', 'TinhToan'},
-        }
-        result = _resolve_row_mapping(
-            thvt_map, ctx,
-            get_excel_val=lambda rec: excel_row.get(rec['sql_col'])
-        )
-        result['ProductId'] = None   # child rows không có ProductId (chỉ parent cần)
-        return result
 
-    def _thdm_view_sql(self):
-        """Hiện SQL INSERT sẽ thực hiện khi nhấn INSERT vào DB."""
-        dt = THEMES[ctk.get_appearance_mode()]
-        if not self._thdm_preview_data:
-            return
-        from datetime import datetime as _dt
-        order_id   = self._thdm_selected_order_id or "NULL"
-        bom_ids    = list(self._thdm_checked_ids)
-        bom_list   = ",".join(str(i) for i in bom_ids)
-        mapping    = load_mapping()
-        cfg        = mapping.get('_CONFIG', {})
-        header_map = mapping.get('THDM_HEADER', [])
-        sp_config  = mapping.get('_SP_CONFIG', [])
-        child_sections = [
-            sec for sec, info in cfg.items()
-            if info.get('parent_section') == 'THDM_HEADER'
-        ]
-        now        = _dt.now()
 
-        ui_vals = {
-            'product_id': self._thdm_selected_product_id,
-            'order_id':   self._thdm_selected_order_id,   # BizDocId string
-            'creator':    self._thdm_creator_user_id or self._current_creator_user_id,
-            'period_id':  self._thdm_selected_period_id,
-        }
 
-        def _fmt(v):
-            if v is None:                                return "NULL"
-            if isinstance(v, str) and v.startswith('@'): return v
-            if isinstance(v, _dt):                       return f"'{v:%Y-%m-%d %H:%M:%S}'"
-            if isinstance(v, str):                       return f"N'{v.replace(chr(39), chr(39)*2)}'"
-            if isinstance(v, float):                     return f"{v:.4f}"
-            return str(v)
 
-        # ── Resolve THDM_HEADER non-SP fields (CoDinh / HeThong / UILookup) ──
-        hdr_out = {}
-        for rec in header_map:
-            sql_col  = rec['sql_col']
-            nguon_dl = rec.get('nguon_dl', '')
-            mac_dinh = rec.get('mac_dinh', '')
-            kieu     = rec.get('kieu_dl', '').lower()
-            if nguon_dl == 'CoDinh':
-                if str(mac_dinh).upper() == 'NULL':
-                    hdr_out[sql_col] = None
-                else:
-                    try:
-                        if kieu in ('int', 'bigint'):
-                            hdr_out[sql_col] = int(float(mac_dinh))
-                        elif kieu in ('numeric', 'float', 'decimal'):
-                            hdr_out[sql_col] = float(mac_dinh)
-                        else:
-                            hdr_out[sql_col] = mac_dinh
-                    except (ValueError, TypeError):
-                        hdr_out[sql_col] = mac_dinh
-            elif nguon_dl == 'HeThong':
-                hdr_out[sql_col] = now if mac_dinh == 'NOW' else None
-            elif nguon_dl == 'UILookup':
-                hdr_out[sql_col] = ui_vals.get(mac_dinh)
-            # SP fields → placeholder (không chạy SP thật để tránh tiêu sequence)
 
-        # EmployeeId: UILookup mac_dinh='creator' → UserId; override với EmployeeId thật
-        _emp_id = getattr(self, '_thdm_creator_employee_id', None)
-        if _emp_id is not None and 'EmployeeId' in hdr_out:
-            hdr_out['EmployeeId'] = _emp_id
-
-        hdr_out['BOMIdList'] = bom_list
-
-        # SP fields: hiện dưới dạng comment placeholder
-        sp_thdm_hdr = [s for s in sp_config
-                       if s.get('section') == 'THDM_HEADER'
-                       and s.get('isactive') == '1'
-                       and s.get('sp_name', '').lower() != 'lookup']
-        for sp_rec in sp_thdm_hdr:
-            sql_col = sp_rec.get('sql_column') or sp_rec.get('sql_col', '')
-            out_flds = [f.strip() for f in sp_rec.get('outputfields', '').split(',') if f.strip()]
-            target = out_flds[0] if out_flds else sql_col
-            if target:
-                hdr_out[target] = f"/*{sp_rec.get('sp_name','SP')}*/"
-
-        # Loại SP-lookup intermediates (Ws_Id) + IsDraftData khỏi INSERT
-        _sp_temp_header = {
-            s['sql_column'] for s in sp_config
-            if s.get('section') == 'THDM_HEADER'
-            and s.get('sp_name', '').lower() == 'lookup'
-            and s.get('isactive') == '1'
-        }
-        _hdr_skip   = _sp_temp_header | {'IsDraftData'}
-        valid_hcols = {r['sql_col'] for r in header_map} | {'BOMIdList'}
-        ins_hcols   = [c for c in hdr_out if c in valid_hcols and c not in _hdr_skip]
-
-        view_hdr = mapping.get('_CONFIG', {}).get('THDM_HEADER', {}).get(
-            'view_insert', 'vB30BizDocDemand_Edit')
-
-        # ── Build cache cho Excel lookup (tất cả child sections) ────────────
-        _all_lk_recs_by_sec = {}
-        _all_view_caches    = {}
-        try:
-            _vc = self._get_db_conn()
-            for _sec in child_sections:
-                _sm  = mapping.get(_sec, [])
-                _lks = [r for r in _sm
-                        if r.get('nguon_dl') == 'Excel'
-                        and r.get('kieu_lookup') and r.get('bang_master')
-                        and r.get('truong_lay_ve')]
-                _all_lk_recs_by_sec[_sec] = _lks
-                if _lks:
-                    _all_view_caches.update(self._build_all_caches(_vc, _lks))
-            _vc.close()
-        except Exception:
-            pass
-
-        # ── Build SQL text ────────────────────────────────────────────────────
-        hdr_cols_str = ', '.join(ins_hcols)
-        hdr_vals_str = ', '.join(
-            hdr_out[c] if isinstance(hdr_out[c], str) and hdr_out[c].startswith('/*')
-            else _fmt(hdr_out[c])
-            for c in ins_hcols
-        )
-
-        lines = [
-            "-- ===== THDM INSERT preview (mapping-driven) =====",
-            f"-- Dự án     (ProductId):  {self._thdm_selected_product_id}",
-            f"-- Đơn hàng  (BizDocId_SO): {order_id}",
-            f"-- BOM chọn  ({len(bom_ids)} BOM): {bom_list}",
-            f"-- Người lập (CreatedBy):  {ui_vals['creator']}",
-            f"-- Đợt       (PeriodId):   {self._thdm_selected_period_id}",
-            "-- NOTE: /*SP_NAME*/ = giá trị do SP sinh ra khi INSERT thật",
-            "",
-            f"-- [1] Tạo phiếu THDM (parent) — {len(ins_hcols)} cột từ THDM_HEADER mapping",
-            f"DECLARE @BizDocId VARCHAR(24) = /*{sp_thdm_hdr[0]['sp_name'] if sp_thdm_hdr else 'SP'}*/NULL;",
-            f"INSERT INTO {view_hdr}",
-            f"    ({hdr_cols_str})",
-            "VALUES",
-            f"    ({hdr_vals_str});",
-            "",
-            f"-- [2] Insert {len(self._thdm_preview_data)} dòng vật tư (child — tất cả sections)",
-        ]
-
-        # Group rows by section để build mỗi INSERT block riêng
-        total_rows = self._thdm_preview_data
-        for sec in child_sections:
-            sec_map    = mapping.get(sec, [])
-            view_sec   = cfg.get(sec, {}).get('view_insert', 'B30BizDocDemandBOM')
-            lk_recs    = _all_lk_recs_by_sec.get(sec, [])
-            sec_rows   = [r for r in total_rows if r.get('_section') == sec]
-            if not sec_rows:
-                continue
-
-            # Resolve sample row để lấy cols
-            sample = self._resolve_thdm_thvt_row(sec_rows[0], "@BizDocId", 1, sec_map, now)
-            cols   = list(sample.keys())
-
-            lines += [
-                "",
-                f"-- Section {sec} ({len(sec_rows)} dòng)",
-                f"INSERT INTO {view_sec} ({', '.join(cols)})",
-                "VALUES",
-            ]
-            for idx, r in enumerate(sec_rows):
-                resolved = self._resolve_thdm_thvt_row(r, "@BizDocId", idx + 1, sec_map, now)
-                for _lrec in lk_recs:
-                    _sc  = _lrec.get('sql_col', '')
-                    _kl  = _lrec.get('kieu_lookup', '')
-                    _bm  = _lrec.get('bang_master', '')
-                    _dk  = _lrec.get('dieu_kien_master', '')
-                    _ss  = _lrec.get('truong_so_sanh', '')
-                    _lv  = _lrec.get('truong_lay_ve', '')
-                    _raw = resolved.get(_sc)
-                    _ck  = _all_view_caches.get((_bm, _dk, _ss, _lv), [])
-                    if _raw is not None and _ck:
-                        _found, _ = self._lookup_generic(_raw, _ck, _kl, _no_popup=True)
-                        resolved[_sc] = _found
-                comma    = "," if idx < len(sec_rows) - 1 else ";"
-                vals_str = ", ".join(_fmt(resolved.get(c)) for c in cols)
-                lines.append(f"    ({vals_str}){comma}")
-
-        sql_text = "\n".join(lines)
-
-        dlg = ctk.CTkToplevel(self)
-        dlg.title("SQL preview — THDM")
-        dlg.geometry("900x580")
-        dlg.grab_set()
-        txt = tk.Text(dlg, bg=dt["bg_main"], fg="#D4D4D4",
-            font=("Consolas", 11), wrap="none",
-            insertbackground="#D4D4D4")
-        txt.pack(fill=tk.BOTH, expand=True, padx=PAD_SM, pady=PAD_SM)
-        txt.insert("1.0", sql_text)
-        txt.configure(state="disabled")
-        ctk.CTkButton(dlg, text="📋  Copy",
-            command=lambda: (self.clipboard_clear(), self.clipboard_append(sql_text)),
-            width=80, height=28).pack(pady=(0,8))
-
-    def _thdm_insert_db(self):
-        if not self._thdm_preview_data:
-            self._show_msg("Không có dữ liệu",
-                "Vui lòng tổng hợp dữ liệu từ Excel trước.", kind="info")
-            return
-        # Phải Kiểm tra đạt trước (giống luồng Import bên BOM)
-        if not self._thdm_validated:
-            self._show_msg("Chưa kiểm tra",
-                "Hãy bấm ④ Kiểm tra trước khi tạo THDM.", kind="warning")
-            return
-        if self._thdm_val_errors:
-            self._show_msg("Còn lỗi",
-                f"Còn {len(self._thdm_val_errors)} dòng lỗi (tô đỏ trong bảng). "
-                "Sửa file Excel/mapping rồi Tổng hợp và Kiểm tra lại.", kind="error")
-            return
-        # Bắt buộc chọn đủ 4 lookup trước khi INSERT
-        _missing = []
-        if not self._thdm_selected_product_id:
-            _missing.append("Dự án")
-        if not self._thdm_selected_order_id:
-            _missing.append("Đơn hàng")
-        if not (self._thdm_creator_user_id or self._current_creator_user_id):
-            _missing.append("Nhân viên")
-        if not self._thdm_selected_period_id:
-            _missing.append("Đợt")
-        if _missing:
-            self.cmb_thdm_product.set_error(not bool(self._thdm_selected_product_id))
-            self.cmb_thdm_order.set_error(not bool(self._thdm_selected_order_id))
-            self.cmb_thdm_creator.set_error(
-                not bool(self._thdm_creator_user_id or self._current_creator_user_id))
-            self.cmb_thdm_period.set_error(not bool(self._thdm_selected_period_id))
-            self._show_msg("Thiếu thông tin",
-                "Vui lòng chọn đầy đủ trước khi Tạo THDM:\n\n"
-                + "\n".join(f"  •  {f}" for f in _missing),
-                kind="warning")
-            return
-        # Bước ④ đã xử lý hết fuzzy — kiểm tra còn dòng lỗi lookup không
-        n_lk_fails = len(self._thdm_val_lk_fails)
-        if n_lk_fails > 0:
-            self._show_msg(
-                "Còn lỗi mapping",
-                f"Vẫn còn {n_lk_fails} dòng chưa tra được mã trong DB.\n"
-                "Vui lòng sửa hết lỗi (bấm ④ Kiểm tra lại) trước khi Tạo THDM.",
-                kind="warning")
-            return
-        n    = len(self._thdm_preview_data)
-        boms = len(self._thdm_checked_ids)
-        ok   = self._ask_msg("Xác nhận tạo THDM",
-            f"Sẽ tạo 1 phiếu THDM mới với:\n"
-            f"  • {boms} BOM được chọn\n"
-            f"  • {n:,} dòng vật tư từ Excel\n\n"
-            f"Tiếp tục?")
-        if not ok:
-            return
-        # Bỏ bước prescan: bước ④ đã resolve hết → chạy thẳng INSERT
-        # _fuzzy_batch_done=True suppresses popup mới; _fuzzy_resolutions GIỮ NGUYÊN
-        self._fuzzy_batch_done  = True
-        self.btn_thdm_insert.configure(state="disabled", text="⏳  Đang tạo phiếu...")
-        self._loading_dlg = self._make_loading_popup(
-            "Đang tạo phiếu THDM...\nVui lòng không đóng cửa sổ.")
-        threading.Thread(target=self._run_thdm_insert_bg, daemon=True).start()
-
-    def _thdm_prescan_worker(self):
-        """Background: quét _thdm_preview_data để thu thập fuzzy cases trước khi INSERT."""
-        conn = None
-        try:
-            mapping = load_mapping()
-            cfg = mapping.get('_CONFIG', {})
-            child_sections = [sec for sec, info in cfg.items()
-                              if info.get('parent_section') == 'THDM_HEADER']
-            conn = self._get_db_conn()
-            rows = self._thdm_preview_data
-            for sec in child_sections:
-                sec_map = mapping.get(sec, [])
-                _fuzzy_recs = [
-                    rec for rec in sec_map
-                    if rec.get('nguon_dl') == 'Excel'
-                    and rec.get('kieu_lookup', '') in ('fuzzy_code', 'fuzzy_name')
-                    and rec.get('bang_master', '')
-                    and rec.get('truong_so_sanh', '')
-                    and rec.get('truong_lay_ve', '')
-                ]
-                if not _fuzzy_recs:
-                    continue
-                _caches = self._build_all_caches(conn, _fuzzy_recs)
-                sec_rows = [r for r in rows if r.get('_section') == sec]
-                for idx, row in enumerate(sec_rows):
-                    for _lrec in _fuzzy_recs:
-                        _bm  = _lrec.get('bang_master', '')
-                        _dk  = _lrec.get('dieu_kien_master', '')
-                        _ss  = _lrec.get('truong_so_sanh', '')
-                        _lv  = _lrec.get('truong_lay_ve', '')
-                        _sc  = _lrec.get('sql_col', '')
-                        _kl  = _lrec.get('kieu_lookup', '')
-                        _raw = row.get(_sc)
-                        if _raw is None:
-                            continue
-                        _ck  = (_bm, _dk, _ss, _lv)
-                        _cache = _caches.get(_ck, [])
-                        if not _cache:
-                            continue
-                        self._fuzzy_ctx = {'section': sec, 'field': _sc, 'row_idx': idx}
-                        self._lookup_generic(_raw, _cache, _kl, _cache_key=_ck)
-        except Exception:
-            pass
-        finally:
-            self._fuzzy_collect_mode = False
-            if conn:
-                try:
-                    conn.close()
-                except Exception:
-                    pass
-        self.after(0, self._after_thdm_prescan)
-
-    def _after_thdm_prescan(self):
-        """Main thread: sau prescan — hiện batch fuzzy dialog (nếu có) rồi bắt đầu INSERT."""
-        try:
-            if getattr(self, '_thdm_prescan_dlg', None):
-                self._thdm_prescan_dlg.destroy()
-                self._thdm_prescan_dlg = None
-        except Exception:
-            pass
-
-        if getattr(self, '_fuzzy_pending', None):
-            _resolved = self._show_batch_fuzzy_dialog(self._fuzzy_pending)
-            self._fuzzy_resolutions = _resolved if _resolved is not None else {}
-        else:
-            self._fuzzy_resolutions = {}
-        self._fuzzy_batch_done = True
-
-        self._loading_dlg = self._make_loading_popup(
-            "Đang tạo phiếu THDM...\nVui lòng không đóng cửa sổ.")
-        threading.Thread(target=self._run_thdm_insert_bg, daemon=True).start()
-
-    def _run_thdm_insert_bg(self):
-        conn = None
-        try:
-            from datetime import datetime as _dt
-            conn       = self._get_db_conn()
-            cur        = conn.cursor()
-            order_id   = self._thdm_selected_order_id
-            bom_ids    = list(self._thdm_checked_ids)
-            rows       = self._thdm_preview_data
-            bom_list   = ",".join(str(i) for i in bom_ids)
-            mapping    = load_mapping()
-            cfg        = mapping.get('_CONFIG', {})
-            header_map = mapping.get('THDM_HEADER', [])
-            sp_config  = mapping.get('_SP_CONFIG', [])
-            child_sections = [
-                sec for sec, info in cfg.items()
-                if info.get('parent_section') == 'THDM_HEADER'
-            ]
-            now        = _dt.now()
-
-            # UI values cho UILookup branch
-            ui_vals = {
-                'product_id': self._thdm_selected_product_id,
-                'order_id':   self._thdm_selected_order_id,   # BizDocId string "11034510FO"
-                'creator':    self._thdm_creator_user_id or self._current_creator_user_id,
-                'period_id':  self._thdm_selected_period_id,
-            }
-            # ── 1) Resolve THDM_HEADER từ mapping ──────────────────────────
-            row_out = {}
-            for rec in header_map:
-                sql_col  = rec['sql_col']
-                nguon_dl = rec.get('nguon_dl', '')
-                mac_dinh = rec.get('mac_dinh', '')
-                kieu     = rec.get('kieu_dl', '').lower()
-
-                if nguon_dl == 'CoDinh':
-                    if mac_dinh.upper() == 'NULL':
-                        row_out[sql_col] = None
-                    else:
-                        try:
-                            if kieu in ('int', 'bigint'):
-                                row_out[sql_col] = int(float(mac_dinh))
-                            elif kieu in ('numeric', 'float', 'decimal'):
-                                row_out[sql_col] = float(mac_dinh)
-                            else:
-                                row_out[sql_col] = mac_dinh
-                        except (ValueError, TypeError):
-                            row_out[sql_col] = mac_dinh
-                elif nguon_dl == 'HeThong':
-                    if mac_dinh == 'NOW':
-                        row_out[sql_col] = now
-                elif nguon_dl == 'UILookup':
-                    row_out[sql_col] = ui_vals.get(mac_dinh)
-                # SP fields resolved in step 2
-
-            # EmployeeId: UILookup mac_dinh='creator' trả về UserId nhưng cột cần EmployeeId (B20Employee.Id)
-            _emp_id = getattr(self, '_thdm_creator_employee_id', None)
-            if _emp_id is not None and 'EmployeeId' in row_out:
-                row_out['EmployeeId'] = _emp_id
-
-            # BOMIdList: trường đặc biệt không có trong mapping
-            row_out['BOMIdList'] = bom_list
-
-            # ── 2) Run _SP_CONFIG cho THDM_HEADER theo thứ tự ──────────────
-            # Dùng _call_sp / _sp_lookup (cùng BOM) để xử lý đúng parameterize
-            sp_thdm = [s for s in sp_config
-                       if s.get('section') == 'THDM_HEADER'
-                       and s.get('isactive') == '1']
-            for sp_rec in sp_thdm:
-                sql_col  = sp_rec.get('sql_column', '')
-                sp_name  = sp_rec.get('sp_name', '')
-                params_s = sp_rec.get('params', '')
-                fallback = sp_rec.get('fallback', '')
-                out_flds = [f.strip() for f in sp_rec.get('outputfields', '').split(',') if f.strip()]
-                try:
-                    if sp_name.lower() == 'lookup':
-                        val = self._sp_lookup(conn, params_s, row_out)
-                        row_out[sql_col] = val if val is not None else (int(fallback) if fallback else None)
-                    else:
-                        r = self._call_sp(conn, sp_name, params_s, row_out)
-                        if out_flds:
-                            row_out[out_flds[0]] = r
-                        elif sql_col:
-                            row_out[sql_col] = r if r is not None else (fallback or None)
-                except Exception as e_sp:
-                    if fallback and sql_col:
-                        row_out[sql_col] = fallback
-                    else:
-                        raise RuntimeError(f"SP '{sp_name}' thất bại và không có fallback: {e_sp}") from e_sp
-
-            # ── 3) INSERT parent — dynamic từ row_out ──────────────────────
-            view_hdr   = mapping.get('_CONFIG', {}).get('THDM_HEADER', {}).get(
-                'view_insert', 'vB30BizDocDemand_Edit')
-            # Loại bỏ SP-lookup intermediates (Ws_Id...) — dùng làm param SP
-            # nhưng không phải column của view → dùng cùng pattern BOM _sp_temp_fields
-            _sp_temp_header = {
-                s['sql_column'] for s in sp_config
-                if s.get('section') == 'THDM_HEADER'
-                and s.get('sp_name', '').lower() == 'lookup'
-                and s.get('isactive') == '1'
-            }
-            # IsDraftData: không tồn tại trong B30BizDocDemand → exclude
-            _thdm_hdr_skip = _sp_temp_header | {'IsDraftData'}
-            valid_cols = {r['sql_col'] for r in header_map} | {'BOMIdList'}
-            ins_cols   = [c for c in row_out if c in valid_cols and c not in _thdm_hdr_skip]
-            ins_vals   = [row_out[c] for c in ins_cols]
-            ph         = ', '.join('?' * len(ins_cols))
-            cur.execute(
-                f"INSERT INTO {view_hdr} ({', '.join(ins_cols)}) VALUES ({ph})",
-                ins_vals)
-
-            biz_doc_id = row_out.get('BizDocId')
-
-            # ── 4) INSERT child sections — generic loop ────────────────────────
-            _insert_count = 0
-            for sec in child_sections:
-                sec_cfg    = cfg[sec]
-                sec_map    = mapping.get(sec, [])
-                expand_muc = sec_cfg.get('expand_muc', False)
-                view_sec   = sec_cfg.get('view_insert', 'B30BizDocDemandBOM')
-
-                # Rows thuộc section này
-                sec_rows = [r for r in rows if r.get('_section') == sec]
-                if not sec_rows:
-                    continue
-
-                # SP_HOOK BeforeInsert cho section này
-                sec_hooks_before = [
-                    h for h in mapping.get('SP_HOOK', [])
-                    if h.get('section', '') == sec
-                    and h.get('event', '').lower() == 'beforeinsert'
-                    and h.get('isactive', '') == '1'
-                ]
-
-                # Build cache cho Excel lookup fields (ItemId, CustomerId, ...)
-                _lk_recs = [
-                    rec for rec in sec_map
-                    if rec.get('nguon_dl') == 'Excel'
-                    and rec.get('kieu_lookup', '')
-                    and rec.get('bang_master', '')
-                    and rec.get('truong_lay_ve', '')
-                ]
-                _caches = self._build_all_caches(conn, _lk_recs) if _lk_recs else {}
-
-                # MucLookup + DetailRowId_SO chỉ cho sections có expand_muc=True
-                _detail_so_cache = []
-                _detail_so_col   = 'DetailRowId_SO'
-                if expand_muc:
-                    _detail_so_rec = next(
-                        (r for r in sec_map
-                         if r.get('nguon_dl') == 'MucLookup'
-                         and r.get('bang_master')
-                         and r.get('truong_so_sanh')
-                         and r.get('truong_lay_ve')),
-                        None
-                    )
-                    if _detail_so_rec:
-                        try:
-                            _detail_so_cache = self._build_cache_generic(
-                                conn,
-                                _detail_so_rec['bang_master'],
-                                _detail_so_rec.get('dieu_kien_master', ''),
-                                _detail_so_rec['truong_so_sanh'],
-                                _detail_so_rec['truong_lay_ve'],
-                            )
-                        except Exception:
-                            pass
-                        _detail_so_col = _detail_so_rec['sql_col']
-
-                for idx, r in enumerate(sec_rows, 1):
-                    try:
-                        resolved = self._resolve_thdm_thvt_row(
-                            r, biz_doc_id, idx, sec_map, now)
-                        if not resolved:
-                            continue
-
-                        # Convert Excel code → DB Id qua lookup (ItemId, ...)
-                        for _lrec in _lk_recs:
-                            _sc    = _lrec.get('sql_col', '')
-                            _kl    = _lrec.get('kieu_lookup', '')
-                            _bm    = _lrec.get('bang_master', '')
-                            _dk    = _lrec.get('dieu_kien_master', '')
-                            _ss    = _lrec.get('truong_so_sanh', '')
-                            _lv    = _lrec.get('truong_lay_ve', '')
-                            _raw   = resolved.get(_sc)
-                            _cache = _caches.get((_bm, _dk, _ss, _lv), [])
-                            if _raw is not None and _cache:
-                                _found, _ = self._lookup_generic(
-                                    _raw, _cache, _kl, _cache_key=(_bm, _dk, _ss, _lv))
-                                resolved[_sc] = _found
-
-                        # Compound lookup DetailRowId_SO (chỉ expand_muc sections)
-                        if _detail_so_cache:
-                            _muc_raw = resolved.get(_detail_so_col)
-                            if _muc_raw is not None:
-                                _muc_key  = str(_muc_raw).replace('Muc ', '').strip()
-                                _compound = (_muc_key, str(order_id))
-                                _found_id, _ = self._lookup_generic(
-                                    _compound, _detail_so_cache, 'exact')
-                                resolved[_detail_so_col] = _found_id
-                            # Factory-only / lookup fail → '' thay NULL
-                            if resolved.get(_detail_so_col) is None:
-                                resolved[_detail_so_col] = ''
-
-                        # SP_HOOK BeforeInsert
-                        if sec_hooks_before:
-                            _run_row_sp_hooks(conn, sec_hooks_before, resolved,
-                                              log_fn=None)
-
-                        cols_c = list(resolved.keys())
-                        vals_c = [resolved[c] for c in cols_c]
-                        ph_c   = ", ".join("?" * len(cols_c))
-                        cur.execute(
-                            f"INSERT INTO {view_sec} ({', '.join(cols_c)}) VALUES ({ph_c})",
-                            vals_c)
-                        _insert_count += 1
-                        if _insert_count % 50 == 0:
-                            self.after(0, lambda n=_insert_count, t=len(rows):
-                                self._update_loading_msg(
-                                    f"Đang tạo phiếu THDM...\n"
-                                    f"Đã insert {n:,}/{t:,} dòng vật tư"))
-                    except Exception as _row_err:
-                        raise RuntimeError(
-                            f"[{sec}] Lỗi tại dòng #{idx} "
-                            f"({r.get('ItemName') or r.get('ItemId') or '?'}): {_row_err}"
-                        ) from _row_err
-
-            conn.commit()
-            self.after(0, lambda n=_insert_count: self._thdm_insert_done(n, None))
-        except Exception as e:
-            if conn is not None:
-                try:
-                    conn.rollback()
-                except Exception:
-                    pass
-            self.after(0, lambda err=e: self._thdm_insert_done(0, str(err)))
-        finally:
-            if conn is not None:
-                try:
-                    conn.close()
-                except Exception:
-                    pass
-
-    def _thdm_insert_done(self, n_rows, error):
-        try:
-            if self._loading_dlg:
-                self._loading_dlg.destroy()
-                self._loading_dlg = None
-        except Exception:
-            pass
-        self.btn_thdm_insert.configure(
-            state="normal", text="💾  ⑤ Tạo THDM")
-        _fname = os.path.basename(self._thdm_excel_path or '')
-        if error:
-            self._db_log('THDM', _fname, self._thdm_selected_order_id, 0, 'LOI', error)
-            self._show_msg("Lỗi tạo THDM", error)
-            return
-        self._db_log('THDM', _fname, self._thdm_selected_order_id, n_rows, 'OK',
-                     f"Đã tạo phiếu THDM với {n_rows:,} dòng vật tư")
-        self._show_msg("Thành công",
-            f"✅  Đã tạo phiếu THDM với {n_rows:,} dòng vật tư.", kind="info")
-        self._log(
-            f"Đơn hàng {self._thdm_selected_order_id}",
-            "THDM", str(n_rows), "OK",
-            f"Đã tạo phiếu THDM với {n_rows:,} dòng vật tư",
-            "ok")
 
     # ─ Tab 4: Lịch sử Log ──────────────────────────────────────────────────────────────────────
     def _build_log_panel(self):
@@ -7523,6 +5563,12 @@ class BOMToolApp(ctk.CTk):
     DB_LOG_DATABASE = '[BOMTool]'
     DB_LOG_TABLE = f'{DB_LOG_DATABASE}.dbo.BOMTool_ImportLog'
 
+    def _creator_log_label(self):
+        """Giá trị cột Creator của log: 'UserId :: Mã | Tên' (giữ được người thật dù tool dùng tài khoản mặc định)."""
+        uid = str(getattr(self, '_current_creator_user_id', '') or '')
+        disp = re.sub(r"\s*\|\s*", " | ", getattr(self, '_current_creator_display', '') or "").strip()
+        return f"{uid} :: {disp}" if disp else uid
+
     def _db_log(self, action, fname, ref_id, n_rows, status, detail):
         """Ghi 1 dòng log import vào bảng DB (chạy nền).
         Bảng chưa được tạo trên DB → bỏ qua êm, không làm phiền user."""
@@ -7539,7 +5585,7 @@ class BOMToolApp(ctk.CTk):
                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (socket.gethostname()[:100],
                      getpass.getuser()[:100],
-                     str(getattr(self, '_current_creator_user_id', '') or '')[:100],
+                     self._creator_log_label()[:100],
                      action,
                      (fname or '')[:255],
                      str(ref_id or '')[:50],
@@ -7552,6 +5598,26 @@ class BOMToolApp(ctk.CTk):
             except Exception:
                 pass
         threading.Thread(target=_worker, daemon=True).start()
+
+    @staticmethod
+    def _friendly_error(err, where=""):
+        """Rút gọn lỗi cho log: bỏ tiền tố driver ODBC, gom khoảng trắng, thêm vị trí dòng nếu có."""
+        s = re.sub(r"\[Microsoft\]\[ODBC Driver [^\]]*\]\[SQL Server\]", "", str(err or ""))
+        _m = re.match(r"^\('[^']*', ['\"](.*)['\"]\)$", s, re.S)   # chuỗi lỗi pyodbc dạng tuple
+        if _m:
+            s = _m.group(1)
+        s = re.sub(r"^\[\d+\]\s*", "", s)
+        s = re.sub(r"\s*\(SQL\w+\)\s*$", "", s)
+        s = re.sub(r"\s+", " ", s).strip() or "Lỗi không xác định"
+        return (f"{where}: {s}" if where else s)[:1000]
+
+    def _rows_read(self):
+        """Tổng số dòng dữ liệu tool đọc được từ file đang nạp (các bảng đã parse)."""
+        try:
+            return int(sum(len(t["df"]) for t in (self.tables or {}).values()
+                           if t.get("df") is not None and "Lỗi" not in t["df"].columns))
+        except Exception:
+            return 0
 
     def _load_db_log(self):
         self.btn_log_db.configure(state="disabled", text="⏳ Đang tải...")
@@ -7823,6 +5889,8 @@ class BOMToolApp(ctk.CTk):
             fname = os.path.basename(r["path"])
             if "error" in r:
                 self._log(fname, "Batch", "—", "Lỗi đọc file", r["error"], "err")
+                if "bỏ qua" not in r["error"].lower():
+                    self._db_log('BOM', fname, '', 0, 'LOI', self._friendly_error(r["error"], 'Đọc file'))
             else:
                 total = sum(len(t["df"]) for t in r["tables"].values())
                 tag   = "ok" if r["n_err"] == 0 else "err"
@@ -7880,7 +5948,7 @@ class BOMToolApp(ctk.CTk):
         df   = tbl["df"]
         errs = self.val_errors.get(table_name, [])
         if hasattr(self, "lbl_hint"):
-            self.lbl_hint.configure(text="")
+            self._set_hint("")
 
         n_rows = len(df)
         n_cols = len(df.columns)
@@ -8247,6 +6315,8 @@ class BOMToolApp(ctk.CTk):
                     self.after(0, lambda: self._set_status("Đã hủy — file có mật khẩu", C["yellow"]))
                     return
                 if err:
+                    self._db_log('BOM', os.path.basename(path), '', 0, 'LOI',
+                                 self._friendly_error(err, 'Mở file'))
                     self.after(0, lambda: self._show_msg("Lỗi mật khẩu", err, 'error'))
                     self.after(0, lambda: self._set_status("Lỗi mật khẩu", C["red"]))
                     return
@@ -8260,10 +6330,14 @@ class BOMToolApp(ctk.CTk):
                 self._current_file = path
                 self.after(0, lambda: self._on_parsed(skipped, warns))
             except PermissionError:
+                self._db_log('BOM', os.path.basename(path), '', 0, 'LOI',
+                             "Mở file: file đang được mở trong Excel")
                 msg = "File đang mở trong Excel. Đóng rồi thử lại."
                 self.after(0, lambda m=msg: self._show_msg("Không thể đọc file", m, 'error'))
                 self.after(0, lambda: self._set_status("File đang bị khóa", C["red"]))
             except Exception as ex:
+                self._db_log('BOM', os.path.basename(path), '', 0, 'LOI',
+                             self._friendly_error(ex, 'Đọc file'))
                 msg = f"Không đọc được file: {ex}"
                 self.after(0, lambda m=msg: self._show_msg("Lỗi đọc file", m, 'error'))
                 self.after(0, lambda: self._set_status("Lỗi đọc file", C["red"]))
@@ -8324,6 +6398,7 @@ class BOMToolApp(ctk.CTk):
 
         self._current_creator_user_id = None
         self._current_creator_employee_id = None
+        self._current_creator_display = None
         self.cmb_creator.set("— Chọn nhân viên —")
         self.cmb_creator.set_error(True)
         self._bom_try_auto_select_order()   # xóa Đơn hàng + Dự án, viền đỏ
@@ -8400,7 +6475,15 @@ class BOMToolApp(ctk.CTk):
                         _norm_vn(self._fmt_cell(df.iat[r, col])))
                     if meaning:
                         hint += f"     →  ô này: {meaning}"
-        self.lbl_hint.configure(text=hint)
+        self._set_hint(hint)
+
+    def _set_hint(self, text):
+        """Ghi chú ngữ cảnh dưới bảng BOM: hiện khi có chữ, ẩn hẳn (không chiếm chỗ) khi rỗng."""
+        self.lbl_hint.configure(text=text)
+        if text:
+            self.lbl_hint.grid()
+        else:
+            self.lbl_hint.grid_remove()
 
     def _on_bom_cell_select(self, event):
         try:
@@ -10229,6 +8312,7 @@ class BOMToolApp(ctk.CTk):
                         if str(_col).upper() == 'STT':
                             stt_v = _get_stt(df_row.get(_col))
                             break
+                self._detail_cursor = f"{label}, STT {stt_v or _pos + 1}"   # vị trí dòng để ghi log lỗi
                 is_section_header = bool(stt_v and SECTION_STT_PATTERN.match(stt_v))
 
                 # Safety: dòng có STT là chữ cái (vd 'I') nhưng có kích thước vật lý
@@ -11277,6 +9361,8 @@ class BOMToolApp(ctk.CTk):
             if result.get('error'):
                 _abort()
                 self._log('', 'prescan', 0, 'Error', result['error'], 'error')
+                self._db_log('BOM', fname, '', self._rows_read(), 'LOI',
+                             self._friendly_error(result['error'].strip().splitlines()[-1], 'Chuẩn bị dữ liệu'))
                 self._show_msg(
                     "Lỗi chuẩn bị dữ liệu",
                     f"Không đọc được dữ liệu file.\n{str(result['error'])[:300]}",
@@ -11420,7 +9506,8 @@ class BOMToolApp(ctk.CTk):
                     _lf.write(f"[{datetime.datetime.now():%Y-%m-%d %H:%M:%S}] fname={fname}\n{_tb_str}\n")
             except Exception:
                 pass
-            result = {'ok': False, 'error': str(e), 'fname': fname}
+            result = {'ok': False, 'error': str(e), 'fname': fname,
+                      'where': getattr(self, '_detail_cursor', '')}
         finally:
             try:
                 conn.autocommit = True
@@ -11449,7 +9536,7 @@ class BOMToolApp(ctk.CTk):
             n_det  = result['detail_count']
             self._set_status(f"\u2705  Import xong — BOM ID {new_id} · {n_det} dòng", C["green"])
             self._log(fname, "Import", str(n_det), "OK", f"BOM ID={new_id}, {n_det} dòng chi tiết", "ok")
-            self._db_log('BOM', fname, new_id, n_det, 'OK',
+            self._db_log('BOM', fname, new_id, self._rows_read() or n_det, 'OK',
                          f"BOM ID={new_id}, {n_det} dòng chi tiết")
             self._last_import_bom_id = new_id
             self._last_import_fname  = fname
@@ -11459,7 +9546,8 @@ class BOMToolApp(ctk.CTk):
             err = result.get('error', 'Unknown error')
             self._set_status("\u274c  Import thất bại", C["red"])
             self._log(fname, "Import", "0", "Lỗi", err, "error")
-            self._db_log('BOM', fname, '', 0, 'LOI', err)
+            self._db_log('BOM', fname, '', self._rows_read(), 'LOI',
+                         self._friendly_error(err, result.get('where', '')))
             self._show_msg("Import thất bại", f"{err}", kind="error")
 
 

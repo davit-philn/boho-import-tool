@@ -18,6 +18,7 @@ APP_VERSION = "2.3.1"
 TAB_IMPORT  = "📥  BOM"
 TAB_THDM    = "📊  Tổng hợp định mức"
 TAB_CATALOG = "🌳  Danh mục vật tư"
+TAB_HISTORY = "🕘  Lịch sử nhập liệu"
 
 
 def get_base_dir():
@@ -196,6 +197,7 @@ THEMES = {
         "sel_bg":           "#0066CC",
         # Catalog tree tag fg
         "cat_leaf":         "#CCCCCC",
+        "cat_group":        "#4EC9B0",
         "cat_inactive":     "#5A7070",
         "cat_orphan":       "#7A7A7A",
         # Log tree tag fg
@@ -211,6 +213,10 @@ THEMES = {
         "badge_err_fg":     "#FF8F8F",
         "badge_warn_bg":    "#3B2E1C",
         "badge_warn_fg":    "#FFD180",
+        "badge_ok_bg":      "#16342B",
+        "badge_ok_fg":      "#7EE2C0",
+        "badge_ok_bg":      "#16342B",
+        "badge_ok_fg":      "#7EE2C0",
         # ô cụ thể bị lỗi/cảnh báo (nổi hơn tô cả dòng)
         "group_row_bg":     "#1F3A5F",
         "group_row_fg":     "#BFDBFE",
@@ -269,6 +275,7 @@ THEMES = {
         "sel_bg":           "#0066CC",
         # Catalog tree tag fg
         "cat_leaf":         "#1E293B",
+        "cat_group":        "#047857",
         "cat_inactive":     "#64748B",
         "cat_orphan":       "#94A3B8",
         # Log tree tag fg
@@ -284,6 +291,10 @@ THEMES = {
         "badge_err_fg":     "#DC2626",
         "badge_warn_bg":    "#FEF3C7",
         "badge_warn_fg":    "#D97706",
+        "badge_ok_bg":      "#D1FAE5",
+        "badge_ok_fg":      "#047857",
+        "badge_ok_bg":      "#D1FAE5",
+        "badge_ok_fg":      "#047857",
         # ô cụ thể bị lỗi/cảnh báo (nổi hơn tô cả dòng)
         "group_row_bg":     "#D6E4F7",
         "group_row_fg":     "#1E3A8A",
