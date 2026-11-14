@@ -983,7 +983,7 @@ class BOMToolApp(ctk.CTk):
 
         # Trái: App name
         ctk.CTkLabel(topbar,
-            text="🏭  BOHO  BOM",
+            text="🏭  BOHO",
             font=ctk_font(*FONT_LABEL),
             text_color=("#16A34A", "#4EC9B0")).grid(
             row=0, column=0, padx=(14, 16), pady=PAD_MD)
@@ -1911,6 +1911,7 @@ class BOMToolApp(ctk.CTk):
             text_color=("gray50", "gray60"),
             fg_color="transparent", anchor="w")
         self.lbl_catalog_table.grid(row=0, column=0, sticky="ew", padx=PAD_SM, pady=(2, 2))
+        self.lbl_catalog_table.grid_remove()   # bỏ dòng "Bảng: … × N cột" (số liệu đã có ở góc phải thanh công cụ)
 
         tf = tk.Frame(content_card, bg=C["panel"])
         tf.grid(row=1, column=0, sticky="nsew", padx=1, pady=(0, 1))
